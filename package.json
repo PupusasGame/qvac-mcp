@@ -1,0 +1,28 @@
+{
+  "name": "qvac-mcp",
+  "version": "0.1.0",
+  "description": "Local AI Agent for MCP servers using QVAC SDK - QVAC Hackathon 2026",
+  "main": "main.mjs",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PupusasGame/qvac-mcp.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/PupusasGame/qvac-mcp/issues"
+  },
+  "homepage": "https://github.com/PupusasGame/qvac-mcp#readme",
+  "dependencies": {
+    "@qvac/sdk": "^0.12.0",
+    "boxen": "^8.0.1",
+    "chalk": "^5.6.2",
+    "dotenv": "^17.4.2",
+    "figlet": "^1.11.0"
+  }
+}
