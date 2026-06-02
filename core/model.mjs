@@ -1,15 +1,12 @@
 import { loadModel, unloadModel, profiler } from "@qvac/sdk";
 import { config }                           from "../config/config.mjs";
-import fs                                   from "fs";
-import path                                 from "path";
+import { appendLog }                        from "./logger.mjs";
 
 let _modelId = null;
 
 // ── Cargar modelo ─
 export async function startModel(onProgress) {
 
-  // Activar el profiler antes de cargar.
-  // Sin opciones — enable() acepta ProfilerRuntimeOptions opcional.
   profiler.enable();
 
   console.log(`\nCargando modelo desde:\n  ${config.model.path}\n`);
@@ -26,7 +23,11 @@ export async function startModel(onProgress) {
 
   process.stdout.write("\r  Modelo cargado ✓                    \n");
 
-  _appendLog({ event: "model_load", modelPath: config.model.path, modelId: _modelId });
+  appendLog({
+    event:     "model_load",
+    modelPath: config.model.path,
+    modelId:   _modelId,
+  });
 
   return _modelId;
 }
@@ -41,14 +42,11 @@ export function getModelId() {
 export async function stopModel() {
   if (!_modelId) return;
 
-  const summary    = profiler.exportSummary();
-  const jsonExport = profiler.exportJSON();
-
-  _appendLog({
-    event:          "model_unload",
-    modelId:        _modelId,
-    profilerSummary: summary,
-    profilerJSON:   jsonExport,
+  appendLog({
+    event:           "model_unload",
+    modelId:         _modelId,
+    profilerSummary: profiler.exportSummary(),
+    profilerJSON:    profiler.exportJSON(),
   });
 
   profiler.disable();
@@ -57,20 +55,4 @@ export async function stopModel() {
   _modelId = null;
 
   console.log("\nModelo descargado. RAM liberada.");
-}
-
-// ── Log interno ─
-//Una línea JSON por evento.
-function _appendLog(data) {
-  try {
-    const logDir  = config.logs.dir;
-    const logFile = path.join(logDir, config.logs.file);
-
-    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
-
-    const line = JSON.stringify({ ts: new Date().toISOString(), ...data }) + "\n";
-    fs.appendFileSync(logFile, line, "utf8");
-  } catch (err) {
-    console.error("[log error]", err.message);
-  }
 }
