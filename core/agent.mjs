@@ -60,6 +60,12 @@ export async function runInstruction(instruction, onToken, onToolCall) {
   const tools   = getTools();
   const start   = Date.now();
 
+  // Reset por instrucción: cada tarea arranca con history limpio.
+  // Evita que _history crezca sin control entre instrucciones y
+  // desborde el contexto del modelo. El system prompt se reconstruye
+  // abajo con el estado de escena fresco, así que no perdemos contexto.
+  _history = [];
+
   const context = await _captureContext();
 
   const systemPrompt = `/no_think

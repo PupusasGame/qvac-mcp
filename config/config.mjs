@@ -1,11 +1,13 @@
 import 'dotenv/config';
-import { QWEN3_8B_INST_Q4_K_M } from "@qvac/sdk";
+
+import { QWEN3_8B_INST_Q4_K_M, QWEN3_1_7B_INST_Q4 } from "@qvac/sdk";
 
 export const config = {
   model: {
-    src:  QWEN3_8B_INST_Q4_K_M,    // ← modelo oficial QVAC con tool calling
+    // src:  QWEN3_8B_INST_Q4_K_M,   
+    src:  QWEN3_1_7B_INST_Q4,        
     type:     "llamacpp-completion",
-    ctxSize:  4096,
+    ctxSize:  8192,
     maxTokens: 2048,
     tools:    true,                  
   },
