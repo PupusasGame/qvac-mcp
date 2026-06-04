@@ -13,9 +13,9 @@ try {
   await connect();
 
   // 3. Ejecutar instrucción real
-
+  console.log("\n🤖 Instrucción: cambia el color del Floor a rojo\n");
   const respuesta = await runInstruction(
-    "Muestra informacion sobre el server MCP",
+    "cambia el color de Floor a rojo",
     (token) => process.stdout.write(token),      // streaming en tiempo real
     (tool, args) => console.log(`\n  → ${tool}`, JSON.stringify(args)),
   );
