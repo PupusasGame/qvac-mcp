@@ -38,19 +38,19 @@ const CORE_TOOLS = [
   "material_manage",
 ];
 
+// Declaramos las tools SOLO con su esquema (sin handler).
+// Sin handler, el SDK no las ejecuta por su cuenta: emite los toolCall
+// y nosotros los ejecutamos manualmente en el loop. Esto evita la
+// doble ejecución (SDK + loop) que corrompía el estado de la escena.
 function _buildTools(tools) {
   const filtered = tools.filter(t => CORE_TOOLS.includes(t.name));
   return filtered.map(t => ({
     name:        t.name,
-    description: (t.description ?? t.name).slice(0, 150),
+    description: (t.description ?? t.name).slice(0, 600),
     parameters:  t.inputSchema ?? {
       type: "object",
       properties: {},
       additionalProperties: true,
-    },
-    handler: async (args) => {
-      const result = await callTool(t.name, args);
-      return JSON.stringify(result);
     },
   }));
 }
@@ -62,22 +62,17 @@ export async function runInstruction(instruction, onToken, onToolCall) {
 
   const context = await _captureContext();
 
-  const systemPrompt = `You are a Godot 4 editor agent. Call tools immediately. No explanations.
+  const systemPrompt = `/no_think
+You are a Godot 4.6 editor agent. Call tools immediately. No explanations.
+When the task is done, reply with one short confirmation sentence and STOP — do not call more tools.
+
+VALUE FORMATS (strict):
+- Vector3 properties (rotation, rotation_degrees, position, scale) MUST be a JSON object: {"x":0,"y":45,"z":0}. NEVER use an array like [0,45,0] and NEVER wrap it in a string.
+- Color properties MUST be an object: {"r":1,"g":0,"b":0,"a":1}.
+- Rotation in Godot uses radians for "rotation" and degrees for "rotation_degrees" — pick the property that matches the unit requested.
 
 SCENE:
-${context.text}
-
-KEY RULES:
-- node_manage needs op + params: {"op":"duplicate","params":{"path":"/Node3D/Ball"}}
-- node_manage ops: duplicate, rename, delete, move(index), reparent(new_parent)
-- - To change color of any MeshInstance3D node:
-  1. material_manage op="create" params={"path":"res://materials/<name>.tres","type":"standard","overwrite":true}
-  2. material_manage op="set_param" params={"path":"res://materials/<name>.tres","param":"albedo_color","value":{"r":1,"g":0,"b":0,"a":1}}
-  3. material_manage op="assign" params={"node_path":"/<root>/<NodeName>","resource_path":"res://materials/<name>.tres"}
-  4. scene_save
-- NEVER use node_set_property for colors — always use material_manage
-- Paths start with / relative to /${context.rootName}
-- Reply briefly in Spanish when done`;
+${context.text} `;
 
   _history.push({ role: "user", content: instruction });
 
@@ -125,32 +120,55 @@ KEY RULES:
 
     const final = await run.final;
 
+    // ── Métricas de inferencia (requisito de la hackathon: prompt, tokens, TTFT, tok/s)
+    // Los nombres de campo varían entre versiones del SDK, así que leemos
+    // defensivamente con varios alias y dejamos el objeto stats crudo por si acaso.
+    const s = final?.stats ?? {};
+    appendLog({
+      event:           "inference",
+      iteration:       iterations,
+      prompt:          instruction,
+      ttftMs:          s.timeToFirstToken ?? s.ttft ?? s.firstTokenMs ?? null,
+      tokensPerSecond: s.tokensPerSecond ?? s.tokens_per_second ?? null,
+      totalTokens:     s.totalTokens ?? s.total_tokens ?? null,
+      totalTimeMs:     s.totalTime ?? s.total_time ?? null,
+      backendDevice:   s.backendDevice ?? null,
+      rawStats:        s,
+    });
+
     // Usar toolCalls del final O los capturados en eventos
     const calls = final?.toolCalls?.length ? final.toolCalls : toolsCalled;
 
     if (calls.length) {
+      // Formato de history alineado con el ejemplo oficial de QVAC:
+      // el assistant lleva solo `content`. Como Qwen no siempre emite
+      // texto junto al tool call, describimos la(s) llamada(s) en el
+      // content para que el modelo recuerde qué hizo en el turno previo.
+      const callsDescription = calls
+        .map(tc => `${tc.name}(${JSON.stringify(tc.arguments ?? {})})`)
+        .join(", ");
       _history.push({
-        role:       "assistant",
-        content:    textBuffer || null,
-        tool_calls: calls.map(tc => ({
-          id:       tc.id,
-          type:     "function",
-          function: { name: tc.name, arguments: JSON.stringify(tc.arguments ?? {}) },
-        })),
+        role:    "assistant",
+        content: textBuffer?.trim()
+          ? `${textBuffer.trim()}\n[called: ${callsDescription}]`
+          : `[called: ${callsDescription}]`,
       });
 
       for (const tc of calls) {
-        // Si el handler ya lo ejecutó usa invoke(), si no ejecuta manualmente
-        const result = tc.invoke
-          ? await tc.invoke()
-          : await callTool(tc.name, tc.arguments ?? {});
+        // Ejecución manual y única. callTool() ya registra el evento
+        // "tool_call" en el log (con durationMs e isError), así que NO
+        // logueamos aquí de nuevo para evitar líneas duplicadas.
+        const result = await callTool(tc.name, tc.arguments ?? {});
 
-        appendLog({ event: "tool_call", tool: tc.name, args: tc.arguments, result });
-
+        // Resultado como mensaje `tool` simple (formato oficial QVAC):
+        // sin tool_call_id. Prefijamos el nombre de la tool para que el
+        // modelo sepa de qué llamada vino el resultado.
+        const resultText = typeof result === "string"
+          ? result
+          : JSON.stringify(result);
         _history.push({
-          role:         "tool",
-          tool_call_id: tc.id,
-          content:      typeof result === "string" ? result : JSON.stringify(result),
+          role:    "tool",
+          content: `${tc.name} result: ${resultText}`,
         });
       }
       continue;

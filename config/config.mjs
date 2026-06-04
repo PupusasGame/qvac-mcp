@@ -4,10 +4,10 @@ import { QWEN3_8B_INST_Q4_K_M } from "@qvac/sdk";
 export const config = {
   model: {
     src:  QWEN3_8B_INST_Q4_K_M,    // ← modelo oficial QVAC con tool calling
-    type:     "llm",
+    type:     "llamacpp-completion",
     ctxSize:  4096,
-    maxTokens: 1024,
-    tools:    true,                   // ← activa tool calling nativo
+    maxTokens: 2048,
+    tools:    true,                  
   },
   mcp: {
     host: "127.0.0.1",

@@ -13,9 +13,9 @@ try {
   await connect();
 
   // 3. Ejecutar instrucción real
-  console.log("\n🤖 Instrucción: cambia el color del Floor a rojo\n");
+  console.log("\n🤖 Instrucción: gira el floor 45 grados en su eje X /no_think\n");
   const respuesta = await runInstruction(
-    "cambia el color de Floor a rojo",
+    "gira el floor 45 grados en su eje X /no_think",
     (token) => process.stdout.write(token),      // streaming en tiempo real
     (tool, args) => console.log(`\n  → ${tool}`, JSON.stringify(args)),
   );
