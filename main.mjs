@@ -11,15 +11,16 @@ import boxen    from "boxen";
 import { startModel, stopModel, getModelId } from "./core/model.mjs";
 import { connect, callTool, disconnect }      from "./core/mcp.mjs";
 import { runInstruction, clearHistory, setThinkMode, getThinkMode, requestCancel } from "./core/agent.mjs";
+import { initRag, closeRag }                  from "./core/rag.mjs";
 import { config }                             from "./config/config.mjs";
 
-// ── Estado global ──
+// ── Estado global ─────────────────────────────────────────────────────────────
 let _isInferring  = false;   // true mientras el agente está procesando
 let _currentRunId = null;    // requestId activo para cancelar
 let _rl           = null;    // readline interface global
 let _isClosing    = false;   // true cuando el agente se está cerrando
 
-// ── Status bar fija en la parte superior ──
+// ── Status bar fija en la parte superior ─────────────────────────────────────
 function drawStatusBar(status = "listo") {
   const model   = config.model.src?.name ?? "custom";
   const mcp     = `${config.mcp.host}:${config.mcp.port}`;
@@ -56,7 +57,7 @@ function showBanner() {
   console.log(chalk.dim(`  ${config.ui.hashtag}  ·  Apache-2.0\n`));
 }
 
-// ── Spinner animado ──
+// ── Spinner animado ───────────────────────────────────────────────────────────
 const FRAMES = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
 let _spinnerTimer = null;
 let _spinnerIdx   = 0;
@@ -78,13 +79,13 @@ function stopSpinner() {
   }
 }
 
-// ── Separador visual ──
+// ── Separador visual ──────────────────────────────────────────────────────────
 function printSeparator() {
   const w = process.stdout.columns || 80;
   console.log(chalk.dim("─".repeat(Math.min(w, 80))));
 }
 
-// ── Comandos especiales ──
+// ── Comandos especiales ───────────────────────────────────────────────────────
 async function handleCommand(cmd) {
   const c = cmd.trim().toLowerCase();
 
@@ -92,6 +93,7 @@ async function handleCommand(cmd) {
     console.log(chalk.dim("\n Cerrando agente..."));
     _rl.close();
     disconnect();
+    await closeRag();
     await stopModel();
     process.exit(0);
   }
@@ -159,7 +161,7 @@ async function handleCommand(cmd) {
   console.log(chalk.dim(" Escribe /ayuda para ver los comandos.\n"));
 }
 
-// ── Main ──
+// ── Main ──────────────────────────────────────────────────────────────────────
 async function main() {
   showBanner();
 
@@ -191,6 +193,19 @@ async function main() {
     process.exit(1);
   }
 
+  // Inicializar RAG (carga embeddings + ingiere docs la primera vez).
+  // Best-effort: si falla, el agente sigue funcionando sin RAG.
+  if (config.rag?.enabled) {
+    try {
+      console.log(chalk.dim("\n Inicializando RAG (docs de Godot + tools)..."));
+      await initRag();
+      console.log(chalk.green(" ✓ RAG listo"));
+    } catch (err) {
+      console.error(chalk.yellow(" ⚠ RAG no disponible: " + err.message));
+      console.error(chalk.dim("   El agente seguirá sin recuperación de docs."));
+    }
+  }
+
   console.log(chalk.dim("\n Modelo: " + (config.model.src?.name ?? "custom")));
   console.log(chalk.dim(" MCP:    " + config.mcp.host + ":" + config.mcp.port));
   console.log(chalk.dim(" Logs:   " + config.logs.dir + "/" + config.logs.file));
@@ -208,11 +223,12 @@ async function main() {
     terminal: true,
   });
 
-  // ── Ctrl+C: cancelar inferencia O salir ─
+  // ── Ctrl+C: cancelar inferencia O salir ──────────────────────────────────
   _rl.on("SIGINT", async () => {
     if (_isInferring) {
-      // Pedimos cancelación al agente: terminará la iteración actual
-
+      // Pedimos cancelación al agente: terminará la iteración actual y no
+      // empezará otra, volviendo limpio al prompt. (La inferencia en curso
+      // puede tardar unos segundos más en cerrar; es esperado.)
       requestCancel();
       stopSpinner();
       process.stdout.write("\n");
@@ -225,6 +241,7 @@ async function main() {
       _isClosing = true;          // evita que prompt() se vuelva a invocar
       _rl.close();
       disconnect();
+      await closeRag();
       await stopModel();
       process.exit(0);
     }
@@ -305,6 +322,7 @@ async function main() {
 main().catch(async (err) => {
   console.error(chalk.red("\nError fatal: " + err.message));
   disconnect();
+  await closeRag();
   await stopModel();
   process.exit(1);
 });

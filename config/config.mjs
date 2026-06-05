@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-import { QWEN3_8B_INST_Q4_K_M, QWEN3_1_7B_INST_Q4 } from "@qvac/sdk";
+import { QWEN3_8B_INST_Q4_K_M, QWEN3_1_7B_INST_Q4, EMBEDDINGGEMMA_300M_Q8_0 } from "@qvac/sdk";
 
 export const config = {
   model: {
@@ -16,6 +16,14 @@ export const config = {
     host: "127.0.0.1",
     port: 8000,
     path: "/mcp",
+  },
+  rag: {
+    enabled:        true,
+    embeddingsSrc:  EMBEDDINGGEMMA_300M_Q8_0,  // 2048 tokens ctx; 
+    embeddingsType: "llamacpp-embedding",      
+    workspace:      "godot-docs-v2",   // v2: re-ingesta con EmbeddingGemma + sin chunking
+    topK:           5,
+    includeGodotDocs: false, 
   },
   logs: {
     dir:  "./logs",
