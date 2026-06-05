@@ -6,6 +6,39 @@ import { config }             from "../config/config.mjs";
 
 let _history = [];
 
+
+let _cancelRequested = false;
+export function requestCancel() { _cancelRequested = true; }
+
+
+function _summarizeResult(toolName, args, result) {
+  // Detectar error: callTool devuelve {error, isError:true} o un string con el mensaje
+  const isError =
+    (result && typeof result === "object" && result.isError) ||
+    (typeof result === "string" && /error|wrong_type|cannot|failed/i.test(result));
+
+  if (isError) {
+    const msg = typeof result === "string"
+      ? result
+      : (result.error ?? JSON.stringify(result));
+    return `ERROR from ${toolName}: ${msg}. Fix the arguments and try again, or report the problem.`;
+  }
+
+  // Éxito: resumen compacto y claro. Para set_property mostramos qué quedó.
+  if (toolName === "node_set_property" && result && typeof result === "object") {
+    const val = JSON.stringify(result.value ?? args?.value);
+    return `SUCCESS: ${toolName} set ${args?.property} on ${args?.path} to ${val}. The change is applied. Do NOT call this tool again for the same change.`;
+  }
+
+  const compact = typeof result === "string" ? result : JSON.stringify(result);
+  return `SUCCESS: ${toolName} completed. Result: ${compact.slice(0, 300)}`;
+}
+
+// /no_think al system prompt. El REPL puede alternarlo con setThinkMode().
+let _thinkMode = false;
+export function setThinkMode(on) { _thinkMode = !!on; }
+export function getThinkMode()   { return _thinkMode; }
+
 async function _captureContext() {
   const [state, hierarchy] = await Promise.all([
     callTool("editor_state", {}),
@@ -39,9 +72,7 @@ const CORE_TOOLS = [
 ];
 
 // Declaramos las tools SOLO con su esquema (sin handler).
-// Sin handler, el SDK no las ejecuta por su cuenta: emite los toolCall
-// y nosotros los ejecutamos manualmente en el loop. Esto evita la
-// doble ejecución (SDK + loop) que corrompía el estado de la escena.
+
 function _buildTools(tools) {
   const filtered = tools.filter(t => CORE_TOOLS.includes(t.name));
   return filtered.map(t => ({
@@ -61,16 +92,18 @@ export async function runInstruction(instruction, onToken, onToolCall) {
   const start   = Date.now();
 
   // Reset por instrucción: cada tarea arranca con history limpio.
-  // Evita que _history crezca sin control entre instrucciones y
-  // desborde el contexto del modelo. El system prompt se reconstruye
-  // abajo con el estado de escena fresco, así que no perdemos contexto.
+
   _history = [];
+  _cancelRequested = false;   // limpiar cualquier cancelación previa
 
   const context = await _captureContext();
 
-  const systemPrompt = `/no_think
-You are a Godot 4.6 editor agent. Call tools immediately. No explanations.
-When the task is done, reply with one short confirmation sentence and STOP — do not call more tools.
+  const thinkDirective = _thinkMode ? "" : "/no_think\n";
+  const systemPrompt = `${thinkDirective}You are a Godot 4.6 editor agent. Call tools immediately. No explanations.
+After each tool call you receive a message starting with SUCCESS or ERROR.
+- On SUCCESS: the change is already applied. Do NOT call the same tool again. If all requested changes are done, reply with ONE short natural-language confirmation sentence and STOP.
+- On ERROR: read the message, fix your arguments, and retry once. Do not repeat the same failing call unchanged.
+Never echo the tool result text back as your answer; summarize it in your own words.
 
 VALUE FORMATS (strict):
 - Vector3 properties (rotation, rotation_degrees, position, scale) MUST be a JSON object: {"x":0,"y":45,"z":0}. NEVER use an array like [0,45,0] and NEVER wrap it in a string.
@@ -88,6 +121,11 @@ ${context.text} `;
   const maxIter     = 8;
 
   while (iterations < maxIter) {
+    // Si el usuario pidió cancelar (Ctrl+C), no empezamos otra iteración.
+    if (_cancelRequested) {
+      finalResponse = "⚠ Operación cancelada por el usuario.";
+      break;
+    }
     iterations++;
 
     const run = completion({
@@ -127,8 +165,7 @@ ${context.text} `;
     const final = await run.final;
 
     // ── Métricas de inferencia (requisito de la hackathon: prompt, tokens, TTFT, tok/s)
-    // Los nombres de campo varían entre versiones del SDK, así que leemos
-    // defensivamente con varios alias y dejamos el objeto stats crudo por si acaso.
+
     const s = final?.stats ?? {};
     appendLog({
       event:           "inference",
@@ -146,9 +183,7 @@ ${context.text} `;
     const calls = final?.toolCalls?.length ? final.toolCalls : toolsCalled;
 
     if (calls.length) {
-      // Formato de history alineado con el ejemplo oficial de QVAC:
-      // el assistant lleva solo `content`. Como Qwen no siempre emite
-      // texto junto al tool call, describimos la(s) llamada(s) en el
+
       // content para que el modelo recuerde qué hizo en el turno previo.
       const callsDescription = calls
         .map(tc => `${tc.name}(${JSON.stringify(tc.arguments ?? {})})`)
@@ -161,20 +196,15 @@ ${context.text} `;
       });
 
       for (const tc of calls) {
-        // Ejecución manual y única. callTool() ya registra el evento
-        // "tool_call" en el log (con durationMs e isError), así que NO
-        // logueamos aquí de nuevo para evitar líneas duplicadas.
+
         const result = await callTool(tc.name, tc.arguments ?? {});
 
-        // Resultado como mensaje `tool` simple (formato oficial QVAC):
-        // sin tool_call_id. Prefijamos el nombre de la tool para que el
-        // modelo sepa de qué llamada vino el resultado.
-        const resultText = typeof result === "string"
-          ? result
-          : JSON.stringify(result);
+        // En vez de volcar JSON crudo, traducimos a SUCCESS/ERROR legible.
+
+        const summary = _summarizeResult(tc.name, tc.arguments ?? {}, result);
         _history.push({
           role:    "tool",
-          content: `${tc.name} result: ${resultText}`,
+          content: summary,
         });
       }
       continue;

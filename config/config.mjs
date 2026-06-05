@@ -4,8 +4,9 @@ import { QWEN3_8B_INST_Q4_K_M, QWEN3_1_7B_INST_Q4 } from "@qvac/sdk";
 
 export const config = {
   model: {
-    // src:  QWEN3_8B_INST_Q4_K_M,   
-    src:  QWEN3_1_7B_INST_Q4,        
+    src: process.env.QVAC_MODEL === "small" 
+      ? QWEN3_1_7B_INST_Q4 
+      : QWEN3_8B_INST_Q4_K_M,          
     type:     "llamacpp-completion",
     ctxSize:  8192,
     maxTokens: 2048,

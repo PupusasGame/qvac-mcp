@@ -13,9 +13,9 @@ try {
   await connect();
 
   // 3. Ejecutar instrucción real
-  console.log("\n🤖 Instrucción: gira el floor 45 grados en su eje X /no_think\n");
+  console.log("\n🤖 duplica Ball\n");
   const respuesta = await runInstruction(
-    "gira el floor 45 grados en su eje X /no_think",
+    "dulplica Ball",
     (token) => process.stdout.write(token),      // streaming en tiempo real
     (tool, args) => console.log(`\n  → ${tool}`, JSON.stringify(args)),
   );
