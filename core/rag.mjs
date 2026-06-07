@@ -23,9 +23,11 @@ import { config }     from "../config/config.mjs";
 import { getTools }   from "./mcp.mjs";
 import { appendLog }  from "./logger.mjs";
 import { GODOT_DOCS } from "./godot-docs.mjs";
+import { allModeDocs } from "./modes.mjs";
 
 let _embModelId = null;
 let _ready      = false;
+let _lastSearch = [];   // diagnósticos de la última búsqueda RAG (para panel debug)
 
 // Construye el corpus a ingerir: descripciones COMPLETAS de las tools MCP
 // (sin el truncado a 600 que aplica el agente) + el corpus curado de Godot.
@@ -41,12 +43,15 @@ function _buildCorpus() {
     return `TOOL: ${t.name}\nPURPOSE: ${t.name} — ${desc.split("\n")[0]}\n\nFULL DESCRIPTION:\n${desc}\n\nPARAMETERS SCHEMA: ${schema}`;
   });
 
+  // Docs específicos por modo (casos curados, etiquetados [MODE:xxx]).
+  const modeDocs = allModeDocs();
+
   // Los docs curados de clases Godot son opcionales (config.rag.includeGodotDocs).
-  // Para el primer test los dejamos fuera y validamos solo con las tools.
+  const base = [...toolDocs, ...modeDocs];
   if (config.rag?.includeGodotDocs) {
-    return [...toolDocs, ...GODOT_DOCS];
+    return [...base, ...GODOT_DOCS];
   }
-  return toolDocs;
+  return base;
 }
 
 // Inicializa RAG. Idempotente: si el workspace ya existe, no re-ingiere.
@@ -98,35 +103,52 @@ export async function initRag(onProgress) {
 // Busca los fragmentos más relevantes para una consulta. Devuelve un array de
 // strings (el contenido de cada fragmento). Si RAG no está listo o el workspace
 // no existe, devuelve [] sin lanzar (ragSearch devuelve [] en ese caso).
-export async function searchDocs(query) {
+export async function searchDocs(query, allowedTools = null) {
   if (!_ready || !_embModelId) return [];
 
   try {
+    // Si hay filtro de modo, pedimos más resultados antes de filtrar para no
+    // quedarnos cortos tras descartar los que no son del modo.
+    const baseTopK = config.rag.topK ?? 5;
+    const fetchK   = allowedTools ? baseTopK * 4 : baseTopK;
+
     const results = await ragSearch({
       modelId:   _embModelId,
       workspace: config.rag.workspace,
       query,
-      topK:      config.rag.topK ?? 5,
+      topK:      fetchK,
     });
 
-    const raw = results ?? [];
+    let raw = results ?? [];
+
+    // Filtro de modo: cada documento empieza con "TOOL: <nombre>". Conservamos
+    // solo los de tools permitidas en el modo activo. Los docs de Godot (que no
+    // empiezan con TOOL:) se conservan siempre como conocimiento de apoyo.
+    if (allowedTools) {
+      raw = raw.filter(r => {
+        const first = (r.content ?? "").split("\n")[0];
+        const m = first.match(/^TOOL:\s*(\S+)/);
+        if (!m) return true;                       // no es un doc de tool → conservar
+        return allowedTools.includes(m[1]);        // es de tool → solo si está permitida
+      }).slice(0, baseTopK);
+    }
+
     const chunks = raw.map(r => r.content).filter(Boolean);
 
-    // DIAGNÓSTICO: registrar QUÉ se recuperó, no solo cuántos. Para cada hit
-    // guardamos su score de similitud (si existe) y un preview del contenido,
-    // de forma que podamos ver si la tool correcta aparece o no para cada query.
     const diagnostics = raw.map((r, i) => ({
       rank:    i + 1,
       score:   r.score ?? r.similarity ?? r.distance ?? null,
       preview: (r.content ?? "").slice(0, 120),
     }));
 
+    _lastSearch = diagnostics;   // para el panel de debug en consola
+
     appendLog({
-      event:    "rag_search",
+      event:     "rag_search",
       query,
-      hits:     chunks.length,
+      mode:      allowedTools ? "filtered" : "all",
+      hits:      chunks.length,
       retrieved: diagnostics,
-      rawKeys:  raw[0] ? Object.keys(raw[0]) : [],   // descubrir la forma real una vez
     });
 
     return chunks;
@@ -135,6 +157,10 @@ export async function searchDocs(query) {
     return [];
   }
 }
+
+// Devuelve los diagnósticos (rank, score, preview) de la última búsqueda RAG,
+// para que el REPL pueda mostrar un resumen compacto en modo debug.
+export function getLastSearch() { return _lastSearch; }
 
 export function isRagReady() { return _ready; }
 

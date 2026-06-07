@@ -10,7 +10,8 @@ import boxen    from "boxen";
 
 import { startModel, stopModel, getModelId } from "./core/model.mjs";
 import { connect, callTool, disconnect }      from "./core/mcp.mjs";
-import { runInstruction, clearHistory, setThinkMode, getThinkMode, requestCancel } from "./core/agent.mjs";
+import { runInstruction, clearHistory, setThinkMode, getThinkMode, requestCancel, setMode, getMode, setDebug, getDebug } from "./core/agent.mjs";
+import { MODES, ACTIVE_MODES }                from "./core/modes.mjs";
 import { initRag, closeRag }                  from "./core/rag.mjs";
 import { config }                             from "./config/config.mjs";
 
@@ -25,7 +26,8 @@ function drawStatusBar(status = "listo") {
   const model   = config.model.src?.name ?? "custom";
   const mcp     = `${config.mcp.host}:${config.mcp.port}`;
   const think   = getThinkMode() ? "think" : "fast";
-  const cmds    = "/escena /think /nothink /reset /ayuda /salir";
+  const modeName = getMode();
+  const cmds    = "/mode /debug /escena /think /nothink /reset /ayuda /salir";
   const statusColor = status === "listo"
     ? chalk.green("● listo")
     : status === "pensando"
@@ -36,7 +38,8 @@ function drawStatusBar(status = "listo") {
     chalk.bgCyan.black.bold(" QVAC MCP ") +
     chalk.bgBlack.white(` modelo: ${chalk.bold(model)} `) +
     chalk.bgBlack.gray(`│ mcp: ${mcp} `) +
-    chalk.bgBlack.white(`│ modo: ${chalk.bold(think === "think" ? chalk.yellow("think") : chalk.green("fast"))} `) +
+    chalk.bgBlack.white(`│ modo: ${chalk.bold.magenta(modeName)} `) +
+    chalk.bgBlack.white(`│ think: ${chalk.bold(think === "think" ? chalk.yellow("on") : chalk.green("off"))} `) +
     chalk.bgBlack.white(`│ ${statusColor} `) +
     chalk.bgBlack.gray(`│ ${cmds} `);
 
@@ -122,9 +125,42 @@ async function handleCommand(cmd) {
     return;
   }
 
+  if (c === "/debug" || c === "/capas") {
+    const on = !getDebug();
+    setDebug(on);
+    if (on) {
+      console.log(chalk.green(" ✓ Panel de capas ACTIVADO.") + chalk.dim(" Verás modo, tools y RAG antes de cada respuesta.\n"));
+    } else {
+      console.log(chalk.dim(" ✓ Panel de capas desactivado.\n"));
+    }
+    drawStatusBar("listo");
+    return;
+  }
+
   if (c === "/think") {
     setThinkMode(true);
     console.log(chalk.green(" ✓ Modo thinking ACTIVADO.") + chalk.dim(" El modelo razonará (más lento, mejor en tareas complejas).\n"));
+    return;
+  }
+
+  if (c.startsWith("/modo") || c.startsWith("/mode")) {
+    const arg = c.split(/\s+/)[1];   // "/modo transform" → "transform"
+    if (!arg) {
+      // Sin argumento: mostrar modos disponibles y el actual.
+      console.log(chalk.bold.cyan("\n Modos disponibles:"));
+      for (const m of ACTIVE_MODES) {
+        const marker = m === getMode() ? chalk.green(" ● ") : chalk.dim(" ○ ");
+        console.log(marker + chalk.white(m.padEnd(12)) + chalk.dim(MODES[m].description));
+      }
+      console.log(chalk.dim("\n Uso: /mode <name>  (e.g. /mode material)\n"));
+      return;
+    }
+    if (setMode(arg)) {
+      console.log(chalk.green(` ✓ Modo activo: ${MODES[arg].label}.`) + chalk.dim(` ${MODES[arg].description}\n`));
+      drawStatusBar("listo");
+    } else {
+      console.log(chalk.red(` ✗ Modo desconocido: "${arg}".`) + chalk.dim(` Disponibles: ${ACTIVE_MODES.join(", ")}\n`));
+    }
     return;
   }
 
@@ -144,6 +180,8 @@ async function handleCommand(cmd) {
     printSeparator();
     console.log(
       chalk.bold.cyan(" Comandos disponibles:\n") +
+      chalk.cyan("  /mode    ") + chalk.dim("change domain: transform, material, animation, ui, script, scene (e.g. /mode material)\n") +
+      chalk.cyan("  /debug   ") + chalk.dim("show/hide the layers panel (mode, tools, RAG) before each answer\n") +
       chalk.cyan("  /escena  ") + chalk.dim("jerarquía actual de Godot\n") +
       chalk.cyan("  /think   ") + chalk.dim("activar razonamiento del modelo (lento)\n") +
       chalk.cyan("  /nothink ") + chalk.dim("desactivar razonamiento (rápido, por defecto)\n") +
@@ -290,6 +328,21 @@ async function main() {
               chalk.yellow("\n  → " + toolName.padEnd(25)) +
               chalk.dim(short)
             );
+          },
+          // onDebug: panel compacto de capas (solo si /debug está activo)
+          (info) => {
+            stopSpinner();
+            const rag = info.ragTop.length
+              ? info.ragTop.map(r => `${chalk.green(r.score)} ${chalk.dim(r.name)}`).join("  ")
+              : chalk.dim("(none)");
+            console.log(
+              chalk.bgMagenta.black.bold(" CAPAS ") +
+              chalk.bgBlack.white(` mode: ${chalk.bold(info.mode)} `) +
+              chalk.bgBlack.gray(`│ think: ${info.think} `) +
+              chalk.bgBlack.white(`│ tools: ${info.toolCount} `) +
+              chalk.bgBlack.white(`│ RAG: ${info.ragHits} hits `)
+            );
+            console.log(chalk.dim("        RAG top: ") + rag);
           }
         );
 

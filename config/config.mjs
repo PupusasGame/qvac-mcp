@@ -19,11 +19,11 @@ export const config = {
   },
   rag: {
     enabled:        true,
-    embeddingsSrc:  EMBEDDINGGEMMA_300M_Q8_0,  // 2048 tokens ctx; 
-    embeddingsType: "llamacpp-embedding",      
-    workspace:      "godot-docs-v2",   // v2: re-ingesta con EmbeddingGemma + sin chunking
+    embeddingsSrc:  EMBEDDINGGEMMA_300M_Q8_0,  // 2048 tokens ctx; ATADO al workspace
+    embeddingsType: "llamacpp-embedding",       // nombre nuevo (evita el warning de alias)
+    workspace:      "godot-docs-v6",   // v2: re-ingesta con EmbeddingGemma + sin chunking
     topK:           5,
-    includeGodotDocs: false, 
+    includeGodotDocs: true,   // primer test: solo tools. Poner true para añadir docs curados.
   },
   logs: {
     dir:  "./logs",
