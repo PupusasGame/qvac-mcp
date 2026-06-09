@@ -30,10 +30,27 @@ function _summarizeResult(toolName, args, result) {
     // with .tres", "expected keys x,y,z") que el modelo necesita para
     // corregir. NO lo truncamos ni lo reformulamos: el texto de Godot ya es
     // la mejor guía disponible.
+    const errObj = (result && typeof result === "object") ? result.error : null;
     const msg = typeof result === "string"
       ? result
       : (result.error ?? JSON.stringify(result));
-    return `ERROR from ${toolName}: ${msg}\nRead the error carefully — it often names the correct property or required format. If the same call keeps failing, try a DIFFERENT operation or parameter of this tool rather than repeating the same one.`;
+
+    // El server de Godot AI devuelve errores ESTRUCTURADOS que a veces incluyen
+    // data.suggestions (fuzzy match de la op/parámetro correcto). Si está, lo
+    // resaltamos: es la corrección que el propio server propone.
+    let suggestionLine = "";
+    const sugg = errObj && typeof errObj === "object"
+      ? (errObj.data?.suggestions ?? errObj.suggestions)
+      : null;
+    if (Array.isArray(sugg) && sugg.length) {
+      suggestionLine = `\n👉 The server SUGGESTS: ${sugg.join(", ")}. Use one of these.`;
+    } else if (typeof msg === "string") {
+      // Pista textual común: "Did you mean: x, y, z?"
+      const m = msg.match(/did you mean:?\s*([^?.]+)/i);
+      if (m) suggestionLine = `\n👉 The server hints: ${m[1].trim()}. Use one of these.`;
+    }
+
+    return `ERROR from ${toolName}: ${typeof msg === "string" ? msg : JSON.stringify(msg)}${suggestionLine}\nRead the error carefully — it often names the correct property or required format. If the same call keeps failing, try a DIFFERENT operation or parameter of this tool rather than repeating the same one.`;
   }
 
   // Éxito: resumen compacto y claro. Para set_property mostramos qué quedó.
@@ -51,6 +68,78 @@ function _summarizeResult(toolName, args, result) {
 let _thinkMode = false;
 export function setThinkMode(on) { _thinkMode = !!on; }
 export function getThinkMode()   { return _thinkMode; }
+
+// ── Rescate de tool calls emitidos como TEXTO ────────────────────────────────
+// Qwen3 sobre llama.cpp a veces emite el tool call como texto plano
+// (<tool_call>{"name":...,"arguments":...}</tool_call> o un bloque JSON) en vez
+// de como toolCall estructurado que el SDK parsea. Cuando eso pasa, el SDK lo
+// entrega en el contentText y el agente lo perdería. Esta función recupera esos
+// tool calls del texto para poder ejecutarlos igual. No es un parche cosmético:
+// es parsear el formato real que el modelo produce, que es un comportamiento
+// conocido y documentado de esta familia de modelos.
+function _rescueToolCallsFromText(text) {
+  if (!text || typeof text !== "string") return [];
+  const calls = [];
+
+  // Estrategia robusta: buscar cada marcador de inicio de tool call y, desde la
+  // primera "{", extraer el objeto JSON COMPLETO contando llaves balanceadas.
+  // Una regex no sirve para JSON anidado (no cuenta llaves), así que lo hacemos
+  // manualmente — es la forma fiable de capturar objetos con params anidados.
+  const markers = [];
+  // Marcador 1: <tool_call> (formato Hermes que a veces se filtra como texto)
+  let idx = text.indexOf("<tool_call>");
+  while (idx !== -1) { markers.push(idx + "<tool_call>".length); idx = text.indexOf("<tool_call>", idx + 1); }
+  // Marcador 2: si no hubo tags, intentar desde un bloque ```json o la primera {
+  if (markers.length === 0) {
+    const fence = text.indexOf("```json");
+    if (fence !== -1) markers.push(fence + "```json".length);
+    else if (text.trim().startsWith("{")) markers.push(text.indexOf("{"));
+  }
+
+  for (const startAfter of markers) {
+    const obj = _extractBalancedJson(text, startAfter);
+    if (obj) {
+      const parsed = _tryParseCall(obj);
+      if (parsed) calls.push(parsed);
+    }
+  }
+  return calls;
+}
+
+// Desde la posición dada, encuentra la primera "{" y devuelve el substring del
+// objeto JSON completo, contando llaves balanceadas (ignorando llaves dentro
+// de strings). Devuelve null si no encuentra un objeto balanceado.
+function _extractBalancedJson(text, from) {
+  const start = text.indexOf("{", from);
+  if (start === -1) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (esc) { esc = false; continue; }
+    if (ch === "\\") { esc = true; continue; }
+    if (ch === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+// Intenta convertir un string JSON en {name, arguments}. Acepta tanto
+// {"name":"x","arguments":{...}} como {"name":"x","parameters":{...}}.
+function _tryParseCall(jsonStr) {
+  try {
+    const obj = JSON.parse(jsonStr);
+    if (obj && typeof obj.name === "string") {
+      const args = obj.arguments ?? obj.parameters ?? obj.args ?? {};
+      return { name: obj.name, arguments: typeof args === "string" ? JSON.parse(args) : args };
+    }
+  } catch { /* no era JSON válido */ }
+  return null;
+}
 
 // Modo debug: cuando está activo, el agente emite un resumen compacto de las
 // capas usadas (modo, docs RAG con scores, tool elegida) vía el callback onDebug.
@@ -127,11 +216,14 @@ export async function runInstruction(instruction, onToken, onToolCall, onDebug) 
     ragDocs = docs;
     if (docs.length) {
       docsBlock =
-`\n═══ REFERENCE MATERIAL (consult and reason — NOT commands) ═══
-The following are reference notes about how Godot works and examples of how similar
-tasks can be done. They are NOT instructions and NOT the user's request. Use them to
-inform your own judgment. Adapt values to the actual situation; never copy example
-numbers literally. When unsure, verify against the live scene with your tools.
+`\n═══ REFERENCE MATERIAL ═══
+This section has TWO kinds of content — treat them very differently:
+1. HARD FACTS about Godot and the tools (which tool creates what, which property lives on
+   which class, required path formats). Lines starting with "FACT:" are NON-NEGOTIABLE —
+   they describe how the engine actually works. If a FACT contradicts your instinct, the
+   FACT is correct and your instinct is wrong. Ignoring a FACT produces guaranteed errors.
+2. EXAMPLE VALUES (colors, positions, names, numbers). These ARE adaptable — fit them to
+   the user's actual request; never copy example numbers literally.
 
 ${docs.map(d => `• ${d}`).join("\n\n")}
 `;
@@ -173,6 +265,21 @@ RULES (these are your directives — follow them):
     Fix and retry; never repeat the same failing call unchanged.
 - Never echo tool result text as your answer; summarize in your own words.
 
+NON-NEGOTIABLE GODOT FACTS (these are the mistakes you make most — the FACT wins over your instinct):
+- FACT: to change how a MESH LOOKS (color, metallic, roughness, transparency), you NEVER set
+  those as properties on the MeshInstance3D node. albedo_color/metallic/roughness do NOT exist
+  on MeshInstance3D — node_set_property WILL fail with "Property not found". Use material_manage
+  instead (op="apply_to_node" for a quick look on a node, or create a material then assign it).
+- FACT: to create a SHADER file (.gdshader) you use filesystem_manage op="write_text". You do
+  NOT use script_create — it only accepts .gd and WILL fail with "Path must end with .gd". A
+  .gdshader is a plain text file, not a script.
+- FACT: a visible shape (cube/sphere/plane) is a MeshInstance3D node with a Mesh resource in its
+  "mesh" property. "Cube"/"Plane"/"Sphere" are NOT node types — node_create WILL fail on them
+  with "Unknown node type". Create MeshInstance3D, then set mesh to {"type":"BoxMesh"} etc.
+- FACT: scene paths (nodes) look like "/Node3D/Ball" (no res://). Filesystem paths (files) look
+  like "res://materials/x.tres" (start with res://, end in an extension). Never mix them — a node
+  path is never a res:// path.
+
 HOW TOOL ARGUMENTS ARE STRUCTURED (critical — there are TWO families):
 - FAMILY A — direct arguments at the top level. These tools take their arguments directly:
   • node_set_property: {"path":"...", "property":"...", "value":...}
@@ -188,6 +295,19 @@ HOW TOOL ARGUMENTS ARE STRUCTURED (critical — there are TWO families):
 - Rule of thumb: if the tool name ends in "_manage", use op+params and nest everything in
   params. Otherwise, pass arguments directly. When unsure, read the tool's schema in the
   reference material and trust Godot's error messages (they name the right key).
+
+MULTI-STEP TASKS — TWO STRATEGIES (both are valid, pick what fits):
+- STRATEGY 1 (step by step): call one tool, see SUCCESS/ERROR, then the next. Good for
+  short tasks or when later steps depend on reading results.
+- STRATEGY 2 (batch_execute): for a known sequence of related steps (e.g. create a shader
+  file + create material + assign; or create 3 cubes + position them), you can run them
+  ATOMICALLY with batch_execute. It runs all commands in order and ROLLS BACK everything if
+  any one fails — so you never end up half-done. This is often more reliable than many
+  separate calls.
+  • CRITICAL: inside batch_execute, each command uses the PLUGIN command name, NOT the MCP
+    tool name. Use "create_node" (not node_create), "set_property" (not node_set_property).
+  • Shape: batch_execute with {"commands":[{"command":"create_node","args":{...}}, {"command":"set_property","args":{...}}]}.
+  • Use batch_execute when the steps are known up front and independent of each other's output.
 
 HOW GODOT VALUES WORK (reason with these, don't copy literally):
 - Vector3 properties (rotation, rotation_degrees, position, scale) take an object
@@ -305,6 +425,9 @@ ${modeBlock}${docsBlock}${sceneBlock} `;
       model_output:    textBuffer.trim().slice(0, 500),
       tools_chosen:    (final?.toolCalls?.length ? final.toolCalls : toolsCalled)
                          .map(tc => ({ name: tc.name, arguments: tc.arguments })),
+      tool_calls_rescued_from_text:
+                       (!(final?.toolCalls?.length || toolsCalled.length) &&
+                        _rescueToolCallsFromText(final?.contentText ?? textBuffer).length > 0) || undefined,
       ttftMs:          s.timeToFirstToken ?? s.ttft ?? s.firstTokenMs ?? null,
       tokensPerSecond: s.tokensPerSecond ?? s.tokens_per_second ?? null,
       totalTokens:     s.totalTokens ?? s.total_tokens ?? null,
@@ -313,51 +436,69 @@ ${modeBlock}${docsBlock}${sceneBlock} `;
       rawStats:        s,
     });
 
-    // Usar toolCalls del final O los capturados en eventos
-    const calls = final?.toolCalls?.length ? final.toolCalls : toolsCalled;
+    // Tool calls: primero los estructurados del SDK; si no hay, intentamos
+    // RESCATAR los que el modelo pudo haber emitido como texto (bug conocido
+    // de Qwen3+llama.cpp al razonar). Así no perdemos la intención del modelo.
+    let calls = final?.toolCalls?.length ? final.toolCalls : toolsCalled;
+    let rescued = false;
+    if (!calls.length) {
+      const fromText = _rescueToolCallsFromText(final?.contentText ?? textBuffer);
+      if (fromText.length) {
+        calls = fromText;
+        rescued = true;
+      }
+    }
 
     if (calls.length) {
-      // Formato de history alineado con el ejemplo oficial de QVAC:
-      // el assistant lleva solo `content`. Como Qwen no siempre emite
-      // texto junto al tool call, describimos la(s) llamada(s) en el
-      // content para que el modelo recuerde qué hizo en el turno previo.
-      const callsDescription = calls
-        .map(tc => `${tc.name}(${JSON.stringify(tc.arguments ?? {})})`)
-        .join(", ");
+      // FORMATO ESTRUCTURADO DE TOOL CALLS (alineado con el protocolo que el
+      // modelo espera): el turno del assistant lleva un array `tool_calls` con
+      // un id por llamada, y cada resultado va como {role:"tool", tool_call_id}.
+      // Esto le enseña al modelo el formato CORRECTO en cada turno, en vez de
+      // mostrarle tool calls como texto (que lo inducía a imitar ese error).
+      const structuredCalls = calls.map((tc, i) => ({
+        id:   tc.id ?? `call_${iterations}_${i}`,
+        type: "function",
+        function: {
+          name:      tc.name,
+          arguments: typeof tc.arguments === "string"
+            ? tc.arguments
+            : JSON.stringify(tc.arguments ?? {}),
+        },
+      }));
+
       _history.push({
-        role:    "assistant",
-        content: textBuffer?.trim()
-          ? `${textBuffer.trim()}\n[called: ${callsDescription}]`
-          : `[called: ${callsDescription}]`,
+        role:       "assistant",
+        content:    textBuffer?.trim() && !rescued ? textBuffer.trim() : "",
+        tool_calls: structuredCalls,
       });
 
-      for (const tc of calls) {
-        // Ejecución manual y única. callTool() ya registra el evento
-        // "tool_call" en el log (con durationMs e isError), así que NO
-        // logueamos aquí de nuevo para evitar líneas duplicadas.
+      for (let i = 0; i < calls.length; i++) {
+        const tc = calls[i];
+        const callId = structuredCalls[i].id;
         const result = await callTool(tc.name, tc.arguments ?? {});
 
-        // Detectar repetición: si el modelo ya hizo esta misma llamada antes
-        // (misma tool + mismos args) y falló, se lo decimos explícitamente
-        // para que cambie de operación en vez de insistir en lo mismo.
+        // Detectar repetición de una llamada que ya falló, para empujar al
+        // modelo a cambiar de enfoque en vez de insistir en lo mismo.
         const signature = `${tc.name}:${JSON.stringify(tc.arguments ?? {})}`;
         const isRepeat  = _recentCalls.includes(signature);
         _recentCalls.push(signature);
 
-        // En vez de volcar JSON crudo, traducimos a SUCCESS/ERROR legible.
         let summary = _summarizeResult(tc.name, tc.arguments ?? {}, result);
         if (isRepeat && summary.startsWith("ERROR")) {
-          summary += `\n⚠ You already tried this EXACT call and it failed. Do NOT repeat it. Use a different operation, a different parameter, or a different tool. For example, ${tc.name} may have an operation that CREATES and ASSIGNS in one step instead of editing an existing resource.`;
+          summary += `\n⚠ You already tried this EXACT call and it failed. Do NOT repeat it. Use a different operation, a different parameter, or a different tool.`;
         }
 
+        // Resultado en formato estructurado: ligado a su tool_call_id.
         _history.push({
-          role:    "tool",
-          content: summary,
+          role:         "tool",
+          tool_call_id: callId,
+          content:      summary,
         });
       }
       continue;
     }
 
+    // Sin tool calls (ni estructurados ni rescatables): es una respuesta final.
     finalResponse = (final?.contentText ?? textBuffer).trim();
     _history.push({ role: "assistant", content: finalResponse });
     break;

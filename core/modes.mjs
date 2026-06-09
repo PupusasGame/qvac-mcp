@@ -35,10 +35,18 @@ export const MODES = {
 - KEY DISTINCTION — absolute vs relative:
   • Absolute ("set Y rotation to 45", "move to x=2"): write the value directly.
   • Relative ("add 15 degrees", "rotate a bit more", "move 2 left", "make it bigger"): the number in the request is a DELTA, not the final value. First read the node's current value with node_get_properties, then add/apply the delta yourself, then write the computed result. Example reasoning: current rotation_degrees.y is 45, user says "add 15" → write y = 60, not 15.
-- node_create makes a node (type + parent path). node_manage handles duplicate / rename / delete / reparent / move. After duplicating, confirm the new node's path with scene_get_hierarchy before using it.`,
+- node_create makes a node (type + parent path). node_manage handles duplicate / rename / delete / reparent / move. After duplicating, confirm the new node's path with scene_get_hierarchy before using it.
+- CREATING VISIBLE SHAPES (cube, sphere, plane, cylinder): these are NOT node types. The node type is always MeshInstance3D; the SHAPE is a Mesh RESOURCE you assign to its "mesh" property. Two steps: (1) node_create type="MeshInstance3D" name="Cube" parent_path="/Node3D"; (2) node_set_property path="/Node3D/Cube" property="mesh" value={"type":"BoxMesh"}. Mesh resource types: BoxMesh (cube), SphereMesh, PlaneMesh, CylinderMesh, CapsuleMesh, PrismMesh, TorusMesh. "Plane", "Cube", "Sphere" are NOT valid node types — never node_create type="Plane".
+- A node_create alone gives an INVISIBLE empty MeshInstance3D until you assign a mesh resource. Always do both steps when the user wants something visible.`,
     docs: [
       `TRANSFORM: Moving a node in 3D space.
 position is a Vector3 object {"x":N,"y":N,"z":N} of final coordinates. For an absolute move, write the target directly. For a relative move ("2 units left"), read the current position first, subtract/add on the right axis, then write the result. Left/right is usually the X axis, up/down is Y, forward/back is Z.`,
+
+      `TRANSFORM: Creating a visible cube / sphere / plane / cylinder.
+FACT: "Cube"/"Plane"/"Sphere" are NOT node types — node_create fails on them with "Unknown node type". A visible shape is always a MeshInstance3D node with a Mesh resource in its "mesh" property — two steps.
+Step 1: node_create type="MeshInstance3D", name="Cube", parent_path="/Node3D".
+Step 2: node_set_property path="/Node3D/Cube", property="mesh", value={"type":"BoxMesh"}.
+Mesh types: BoxMesh (cube), SphereMesh, PlaneMesh (flat), CylinderMesh, CapsuleMesh, PrismMesh, TorusMesh. The name "Cube" is an EXAMPLE — use a name that fits. Consider doing both steps in one batch_execute.`,
 
       `TRANSFORM: Rotating a node.
 rotation_degrees is a Vector3 object in degrees; rotation is the same in radians. Pick the one matching the unit asked. For an ABSOLUTE rotation ("set Y to 45") write {"x":0,"y":45,"z":0}. For a RELATIVE rotation ("add 15 degrees on Y", "rotate a bit more"), the number is a delta: read the current rotation_degrees with node_get_properties, add the delta to the right axis, and write the computed total. All three axes must be present in the object you write.`,
@@ -63,7 +71,7 @@ Example — 3 stacked cubes: create Cube1, Cube2, Cube3 all with parent_path "/N
   material: {
     label: "Material",
     description: "Set colors, materials, textures, and visual look of meshes.",
-    tools: ["material_manage", "node_set_property", "script_create"],
+    tools: ["material_manage", "node_set_property", "filesystem_manage"],
     systemPrompt: `MATERIAL MODE KNOWLEDGE (Godot 4.6):
 - A freshly created MeshInstance3D usually has NO material resource (.tres) to edit.
 - FASTEST way to color a mesh: material_manage op="apply_to_node". Inside params put node_path plus the MATERIAL PROPERTIES directly. Example: params={"node_path":"/Node3D/Floor","albedo_color":{"r":1,"g":0,"b":0,"a":1}}.
@@ -72,12 +80,16 @@ Example — 3 stacked cubes: create Cube1, Cube2, Cube3 all with parent_path "/N
 - Presets via op="apply_preset": metal, glass, emissive, unlit, matte, ceramic, wood, plastic. Example: params={"node_path":"/Node3D/Ball","preset":"metal"}.
 - Color values are 0.0 to 1.0, NOT 0-255. red={"r":1,"g":0,"b":0,"a":1}, white={"r":1,"g":1,"b":1,"a":1}, gray={"r":0.5,"g":0.5,"b":0.5,"a":1}.
 - SHADERS need a 3-step flow (see the shader doc below) — a .gdshader file must exist with code BEFORE a ShaderMaterial can use it.
+- TWO MATERIAL TYPES, different params: StandardMaterial3D uses albedo_color/metallic/roughness/emission. ShaderMaterial uses SHADER UNIFORMS via op="set_shader_param" — it does NOT have albedo_color. Never call apply_to_node with albedo_color on a node that has a ShaderMaterial; that fails with "Property 'albedo_color' not found on ShaderMaterial".
+- READING material state: to inspect a node's material, prefer reading the resource godot://node/{path}/properties or godot://materials, OR node_get_properties. Do NOT call op="get" with a node path — get/set_param expect a res:// .tres file path, not a scene node path.
+- material_manage ops (official): create, set_param, set_shader_param, get, list, assign, apply_to_node, apply_preset.
 - material_manage uses op + params (nested object), never flat arguments.`,
     docs: [
       `MATERIAL: Changing the color of a MeshInstance3D (fastest method).
-Use material_manage op="apply_to_node". Inside params put node_path and the material properties directly.
+FACT: color is a MATERIAL property, NOT a node property. node_set_property with albedo_color on a MeshInstance3D FAILS. Use material_manage op="apply_to_node" instead.
+Put node_path and the material properties directly inside params.
 Example: paint Floor red → op="apply_to_node", params={"node_path":"/Node3D/Floor","albedo_color":{"r":1,"g":0,"b":0,"a":1}}.
-Do NOT add "slot", "type", or "transparency" inside params — only real material properties like albedo_color, metallic, roughness. Works even if the node has no material yet.`,
+The color values are EXAMPLES — adapt to what the user asks. Do NOT add "slot", "type", or "transparency" inside params — only real material properties like albedo_color, metallic, roughness. Works even if the node has no material yet.`,
 
       `MATERIAL: Making something semi-transparent.
 Transparency comes from the alpha channel of albedo_color, not a separate flag.
@@ -89,12 +101,13 @@ material_manage op="apply_preset" applies a curated visual style to a node.
 Available presets: metal, glass, emissive, unlit, matte, ceramic, wood, plastic.
 Example: make Ball look metallic → op="apply_preset", params={"node_path":"/Node3D/Ball","preset":"metal"}.`,
 
-      `MATERIAL: Creating and using a SHADER (3 steps, order matters).
-A ShaderMaterial needs a .gdshader FILE that already contains shader code. You cannot create a shader material pointing at a file that doesn't exist yet.
-Step 1 — write the shader file first using the SCRIPT tools: script_create path="res://shaders/holographic.gdshader" content="shader_type spatial;\\nvoid fragment() { ALBEDO = vec3(0.0, 1.0, 1.0); }".
-Step 2 — create a ShaderMaterial that references it: material_manage op="create", params={"path":"res://materials/holographic.tres","type":"shader","shader_path":"res://shaders/holographic.gdshader","overwrite":true}.
-Step 3 — assign it to the node: material_manage op="assign", params={"node_path":"/Node3D/Ball","resource_path":"res://materials/holographic.tres"}.
-Then set shader uniforms with op="set_shader_param", params={"path":"res://materials/holographic.tres","param":"<uniform_name>","value":<value>}.`,
+      `MATERIAL: Creating and using a SHADER (verified 4-step flow, order matters).
+FACT: a .gdshader is a TEXT file created with filesystem_manage op="write_text". NEVER use script_create for it — script_create only accepts .gd and fails with "Path must end with .gd". A ShaderMaterial needs the .gdshader file to EXIST before it can reference it.
+Step 1 — write the shader text file: filesystem_manage op="write_text", params={"path":"res://shaders/holographic.gdshader","content":"shader_type spatial;\\nrender_mode unshaded;\\nvoid fragment() {\\n\\tALBEDO = vec3(0.0, 1.0, 1.0);\\n\\tALPHA = 0.6;\\n}"}.
+Step 2 — make the editor import it: filesystem_manage op="reimport", params={"paths":["res://shaders/holographic.gdshader"]}.
+Step 3 — create a ShaderMaterial referencing it: material_manage op="create", params={"path":"res://materials/holographic.tres","type":"shader","shader_path":"res://shaders/holographic.gdshader","overwrite":true}.
+Step 4 — assign it to the node: material_manage op="assign", params={"node_path":"/Node3D/Ball","resource_path":"res://materials/holographic.tres"}.
+The ALBEDO/ALPHA values above are EXAMPLES — adapt them to the look the user wants. Set shader uniforms with op="set_shader_param".`,
 
       `MATERIAL: Editing an existing .tres material file.
 Only use op="set_param" when a .tres file already exists. The path MUST end in .tres, .material, or .res — never a node path.
@@ -112,20 +125,19 @@ Example: params={"node_path":"/Node3D/Ball","emission_enabled":true,"emission":{
     description: "Create animation clips, tracks, keyframes; play and preset animations.",
     tools: ["animation_create", "animation_manage", "node_create", "node_find"],
     systemPrompt: `ANIMATION MODE KNOWLEDGE (Godot 4.6):
-- Animations REQUIRE an AnimationPlayer node. ALWAYS do this first: check the scene for an existing AnimationPlayer (look in the CURRENT SCENE list). If none exists, create one with node_create type="AnimationPlayer", parent_path pointing at a sensible parent (e.g. the node you want to animate, or "/Node3D"). Only AFTER it exists can you create or play animations.
-- The player_path you pass to animation tools must be the ACTUAL path of the AnimationPlayer you created/found — verify it in the scene, do not assume "/Node3D/AnimationPlayer" exists.
-- animation_create: creates a NEW clip inside an existing AnimationPlayer. Requires player_path and animation_name.
-- animation_manage ops: add_property_track, add_method_track, set_autoplay, play, stop, list, get, delete, validate, and presets.
-- Presets (one call each): op="preset_pulse" (scale bounce), "preset_fade" (alpha in/out), "preset_slide" (position), "preset_shake". They need params with player_path, target_path, and the preset's options.
-- To add a manual keyframe track: op="add_property_track", params={"player_path":"...","animation_name":"...","node_path":"...","property":"position","keyframes":[{"time":0,"value":{"x":0,"y":0,"z":0}},{"time":1,"value":{"x":3,"y":0,"z":0}}]}.
-- Keyframe "time" is in seconds; "value" matches the property type (Vector3 for position/rotation_degrees/scale).
-- After creating animations, consider set_autoplay so they run, or op="play" for editor preview.`,
+- IMPORTANT: animation_create AUTO-CREATES the AnimationPlayer and the animation library if they don't exist yet. You do NOT need to create the AnimationPlayer manually first — just call animation_create with a player_path and animation_name, and the server sets everything up. (This is a feature of the Godot AI server.)
+- animation_create: creates a NEW clip. params: player_path (where the AnimationPlayer should live, e.g. "/Node3D/AnimationPlayer"), name (clip name), optional length, loop_mode.
+- animation_manage ops (official list): player_create, delete, validate, add_property_track, add_method_track, set_autoplay, play, stop, list, get, create_simple, preset_fade, preset_slide, preset_shake, preset_pulse.
+- PRESETS are the easiest path (one call each): preset_pulse (scale bounce), preset_fade (alpha in/out), preset_slide (position), preset_shake. params include player_path, target_path, and the preset's options.
+- op="create_simple" builds a full multi-track clip in ONE call from tween specs — prefer it for simple animations over manual keyframe tracks.
+- Manual keyframes: op="add_property_track", params with player_path, animation_name, node_path, property, keyframes:[{time, value}]. Keyframe time is seconds; value matches the property type (Vector3 for position/rotation_degrees/scale).
+- After creating, op="set_autoplay" makes it run automatically, or op="play" for editor preview.`,
     docs: [
       `ANIMATION: Creating a movement animation from A to B.
-Step 1: If no AnimationPlayer exists, node_create type="AnimationPlayer", parent_path="/Node3D".
-Step 2: animation_create player_path="/Node3D/AnimationPlayer", animation_name="Move".
-Step 3: animation_manage op="add_property_track", params={"player_path":"/Node3D/AnimationPlayer","animation_name":"Move","node_path":"/Node3D/Ball","property":"position","keyframes":[{"time":0,"value":{"x":0,"y":0,"z":0}},{"time":2,"value":{"x":5,"y":0,"z":0}}]}.
-Step 4: animation_manage op="play", params={"player_path":"/Node3D/AnimationPlayer","animation_name":"Move"}.`,
+The AnimationPlayer is auto-created — you do not make it manually.
+Step 1: animation_create with params {"player_path":"/Node3D/AnimationPlayer","name":"Move","length":2.0}.
+Step 2: animation_manage op="add_property_track", params={"player_path":"/Node3D/AnimationPlayer","animation_name":"Move","node_path":"/Node3D/Ball","property":"position","keyframes":[{"time":0,"value":{"x":0,"y":0,"z":0}},{"time":2,"value":{"x":5,"y":0,"z":0}}]}.
+Step 3: animation_manage op="set_autoplay" (or "play") with params {"player_path":"/Node3D/AnimationPlayer","animation_name":"Move"}.`,
 
       `ANIMATION: Using a preset animation effect.
 op="preset_fade": fades a node in/out (modulate alpha). params: player_path, node_path, duration.
@@ -150,7 +162,7 @@ Set loop mode and autoplay for continuous spin.`,
   ui: {
     label: "UI",
     description: "Build HUDs, menus, layouts, themes, and Control nodes.",
-    tools: ["ui_manage", "theme_manage", "node_create", "node_set_property", "node_manage"],
+    tools: ["ui_manage", "theme_manage", "node_create", "node_set_property", "node_manage", "signal_manage"],
     systemPrompt: `UI MODE KNOWLEDGE (Godot 4.6):
 - UI nodes inherit from Control. Common types: Label, Button, Panel, TextureRect, ProgressBar, HBoxContainer, VBoxContainer, GridContainer, MarginContainer, CenterContainer, ColorRect, RichTextLabel, LineEdit, SpinBox, CheckBox, OptionButton, TabContainer, ScrollContainer, PopupMenu, WindowDialog.
 - UI nodes live under a CanvasLayer or directly under the root for 2D/UI scenes.
@@ -241,7 +253,7 @@ script_patch is safer than script_create when the file already has logic you wan
   scene: {
     label: "Scene",
     description: "Open/save scenes, run the project, manage camera, audio, and filesystem.",
-    tools: ["scene_open", "scene_save", "scene_manage", "project_run", "project_manage", "camera_manage", "audio_manage", "filesystem_manage"],
+    tools: ["scene_open", "scene_save", "scene_manage", "project_run", "project_manage", "camera_manage", "audio_manage", "filesystem_manage", "node_create", "node_set_property"],
     systemPrompt: `SCENE MODE KNOWLEDGE (Godot 4.6):
 - scene_save: saves the currently open scene to disk. No params needed. Always call after making changes.
 - scene_open: opens a .tscn file by res:// path. Switches the active scene in the editor.
