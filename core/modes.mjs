@@ -1,15 +1,8 @@
 // modes.mjs
 // ─────────────────────────────────────────────────────────────────────────────
-// Modos por dominio. Cada modo define TRES cosas:
-//   1. tools       → qué herramientas MCP se exponen al modelo en ese modo.
-//   2. systemPrompt → conocimiento curado de Godot 4.6 que SIEMPRE se inyecta
-//                     en ese modo (no depende de que el RAG lo recupere).
-//   3. docs         → documentos específicos del modo que se ingieren en el RAG.
-//
-// Tres flancos contra "el modelo no sabe usar Godot":
-//   - tools acotadas  → menos confusión entre herramientas parecidas.
-//   - systemPrompt    → conocimiento garantizado por dominio.
-//   - docs por modo   → recuperación RAG enfocada.
+// Modos por dominio. Conocimiento CONCISO, AFIRMATIVO ("do this when..."), con
+// contratos de herramienta VERIFICADOS empíricamente contra el MCP Godot 4.6
+// (hi-godot/godot-ai v2.6.x). Cada ejemplo es un patrón probado que funciona.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const BASE_TOOLS = [
@@ -23,274 +16,170 @@ export const BASE_TOOLS = [
 ];
 
 export const MODES = {
-
   // ── TRANSFORM ──────────────────────────────────────────────────────────────
   transform: {
     label: "Transform",
-    description: "Move, rotate, scale, position nodes; create, delete, rename, reparent nodes.",
-    tools: ["node_set_property", "node_create", "node_find", "node_manage"],
-    systemPrompt: `TRANSFORM MODE — how Godot 4.6 transforms work (reason with this):
-- A Node3D exposes position (Vector3, local), rotation_degrees (Vector3, degrees), rotation (Vector3, radians), and scale (Vector3, default {"x":1,"y":1,"z":1}). Each Vector3 is an object {"x":N,"y":N,"z":N} of FINAL values.
-- Axes: X is pitch, Y is yaw (turning), Z is roll. Node paths are relative to the scene root (e.g. "/Node3D/Ball").
-- KEY DISTINCTION — absolute vs relative:
-  • Absolute ("set Y rotation to 45", "move to x=2"): write the value directly.
-  • Relative ("add 15 degrees", "rotate a bit more", "move 2 left", "make it bigger"): the number in the request is a DELTA, not the final value. First read the node's current value with node_get_properties, then add/apply the delta yourself, then write the computed result. Example reasoning: current rotation_degrees.y is 45, user says "add 15" → write y = 60, not 15.
-- node_create makes a node (type + parent path). node_manage handles duplicate / rename / delete / reparent / move. After duplicating, confirm the new node's path with scene_get_hierarchy before using it.
-- CREATING VISIBLE SHAPES (cube, sphere, plane, cylinder): these are NOT node types. The node type is always MeshInstance3D; the SHAPE is a Mesh RESOURCE you assign to its "mesh" property. Two steps: (1) node_create type="MeshInstance3D" name="Cube" parent_path="/Node3D"; (2) node_set_property path="/Node3D/Cube" property="mesh" value={"type":"BoxMesh"}. Mesh resource types: BoxMesh (cube), SphereMesh, PlaneMesh, CylinderMesh, CapsuleMesh, PrismMesh, TorusMesh. "Plane", "Cube", "Sphere" are NOT valid node types — never node_create type="Plane".
-- A node_create alone gives an INVISIBLE empty MeshInstance3D until you assign a mesh resource. Always do both steps when the user wants something visible.`,
+    description: "Move, rotate, scale, position nodes; create, duplicate, rename, delete nodes.",
+    tools: ["node_set_property", "node_create", "node_find", "node_manage", "filesystem_manage", "batch_execute"],
+    systemPrompt: `TRANSFORM MODE (Godot 4.6) — verified tool contracts:
+- node_set_property uses: path, property, value. Example: path="/Node3D/Ball", property="position", value={"x":0,"y":1,"z":0}.
+- Vectors are JSON objects {"x":N,"y":N,"z":N}. A Node3D has position, rotation_degrees, scale.
+- node_create uses: type, name, parent_path. parent_path is relative to the scene root ("" means the root itself).
+- To make a VISIBLE shape: create a MeshInstance3D, write a mesh .tres file (e.g. BoxMesh) with filesystem_manage, then set the node's "mesh" property to that file path. Assigning an inline {"type":"BoxMesh"} object is unreliable — use the .tres file path.
+- For several known steps at once, use batch_execute (see its doc).`,
     docs: [
-      `TRANSFORM: Moving a node in 3D space.
-position is a Vector3 object {"x":N,"y":N,"z":N} of final coordinates. For an absolute move, write the target directly. For a relative move ("2 units left"), read the current position first, subtract/add on the right axis, then write the result. Left/right is usually the X axis, up/down is Y, forward/back is Z.`,
+      `TRANSFORM: Move a node to a position.
+node_set_property path="/Node3D/Ball", property="position", value={"x":3,"y":0,"z":0}.
+For a relative move, read the current position with node_get_properties first, then write the new value.`,
 
-      `TRANSFORM: Creating a visible cube / sphere / plane / cylinder.
-FACT: "Cube"/"Plane"/"Sphere" are NOT node types — node_create fails on them with "Unknown node type". A visible shape is always a MeshInstance3D node with a Mesh resource in its "mesh" property — two steps.
-Step 1: node_create type="MeshInstance3D", name="Cube", parent_path="/Node3D".
-Step 2: node_set_property path="/Node3D/Cube", property="mesh", value={"type":"BoxMesh"}.
-Mesh types: BoxMesh (cube), SphereMesh, PlaneMesh (flat), CylinderMesh, CapsuleMesh, PrismMesh, TorusMesh. The name "Cube" is an EXAMPLE — use a name that fits. Consider doing both steps in one batch_execute.`,
+      `TRANSFORM: Rotate a node.
+node_set_property path="/Node3D/Ball", property="rotation_degrees", value={"x":0,"y":45,"z":0}.
+All three axes are required in the object. Y is the vertical-axis spin.`,
 
-      `TRANSFORM: Rotating a node.
-rotation_degrees is a Vector3 object in degrees; rotation is the same in radians. Pick the one matching the unit asked. For an ABSOLUTE rotation ("set Y to 45") write {"x":0,"y":45,"z":0}. For a RELATIVE rotation ("add 15 degrees on Y", "rotate a bit more"), the number is a delta: read the current rotation_degrees with node_get_properties, add the delta to the right axis, and write the computed total. All three axes must be present in the object you write.`,
+      `TRANSFORM: Scale a node.
+node_set_property path="/Node3D/Ball", property="scale", value={"x":2,"y":2,"z":2}.`,
 
-      `TRANSFORM: Scaling a node.
-scale is a Vector3 object, default {"x":1,"y":1,"z":1}. "Twice as big" means multiply current scale by 2 (read current first if it may not be 1). Uniform scale uses equal components; non-uniform differs per axis.`,
+      `TRANSFORM: Create a visible cube / sphere / plane / cylinder (verified 3-step flow).
+The reliable way is to create the mesh as a .tres resource file, then assign that file.
+Step 1: node_create type="MeshInstance3D", name="Cube", parent_path="".
+Step 2: filesystem_manage op="write_text", params={"path":"res://meshes/cube.tres","content":"[gd_resource type=\\"BoxMesh\\" format=3]\\n[resource]"}.
+Step 3: node_set_property path="/Node3D/Cube", property="mesh", value="res://meshes/cube.tres".
+Mesh resource types for step 2: BoxMesh (cube), SphereMesh, PlaneMesh (flat), CylinderMesh, CapsuleMesh, PrismMesh, TorusMesh. For a sized plane use content "[gd_resource type=\\"PlaneMesh\\" format=3]\\n[resource]\\nsize = Vector2(2, 2)".
+The node type is always MeshInstance3D; the shape comes from the mesh resource file.`,
 
-      `TRANSFORM: Duplicating and placing a node next to the original.
-First node_manage op "duplicate" on the source path. Then scene_get_hierarchy to learn the new node's actual path (never assume the name). Then set its position. The new node starts at the original's transform, so to offset it, read its position and add the offset.`,
+      `TRANSFORM: Duplicate a node and place the copy.
+Step 1: node_manage op="duplicate", params={"path":"/Node3D/Cube"}.
+Step 2: read the new node's path with scene_get_hierarchy (it is usually "<name>Copy").
+Step 3: node_set_property on the copy to move it, e.g. property="position", value={"x":0,"y":1,"z":0}.`,
 
-      `TRANSFORM: Creating a new 3D node.
-node_create takes a Godot class name as type, an optional name, and a parent_path. Common 3D types: Node3D, MeshInstance3D, DirectionalLight3D, OmniLight3D, SpotLight3D, Camera3D, RigidBody3D, StaticBody3D, CollisionShape3D, Area3D, GPUParticles3D, CSGBox3D, CSGSphere3D.
-parent_path is WHERE in the tree the node attaches. To create sibling nodes (independent objects), give them all the SAME parent_path (e.g. "/Node3D"), NOT each other as parents.`,
-
-      `TRANSFORM: Placing objects "on top of" / "stacked" on each other (spatial, not hierarchy).
-"On top of" means a higher POSITION on the Y axis — it does NOT mean making one node a child of another. Create all the objects as siblings under the same parent (e.g. parent_path "/Node3D"), then give each a higher position.y.
-Example — 3 stacked cubes: create Cube1, Cube2, Cube3 all with parent_path "/Node3D"; then set Cube1 position y=0, Cube2 position y=1, Cube3 position y=2 (assuming ~1 unit tall). Never make Cube2 a child of Cube1 just because it sits on top — that nests the tree incorrectly. Use node positions to stack, not parent_path.`,
+      `TRANSFORM: Do several known steps atomically with batch_execute.
+batch_execute params={"commands":[
+  {"command":"create_node","params":{"type":"MeshInstance3D","name":"Cube","parent_path":""}},
+  {"command":"set_property","params":{"path":"/Node3D/Cube","property":"mesh","value":{"type":"BoxMesh"}}}
+]}.
+Inside commands use the PLUGIN names: "create_node" and "set_property" (not node_create / node_set_property). The whole batch rolls back if any step fails.`,
     ],
   },
 
   // ── MATERIAL ───────────────────────────────────────────────────────────────
   material: {
     label: "Material",
-    description: "Set colors, materials, textures, and visual look of meshes.",
+    description: "Set colors, materials, and the visual look of meshes.",
     tools: ["material_manage", "node_set_property", "filesystem_manage"],
-    systemPrompt: `MATERIAL MODE KNOWLEDGE (Godot 4.6):
-- A freshly created MeshInstance3D usually has NO material resource (.tres) to edit.
-- FASTEST way to color a mesh: material_manage op="apply_to_node". Inside params put node_path plus the MATERIAL PROPERTIES directly. Example: params={"node_path":"/Node3D/Floor","albedo_color":{"r":1,"g":0,"b":0,"a":1}}.
-- IMPORTANT: params only accepts REAL StandardMaterial3D property names (albedo_color, metallic, roughness, emission_enabled, emission, etc.). Do NOT put "slot", "transparency", or "type" inside params — those are not material properties and will be rejected. apply_to_node defaults the slot to override automatically.
-- For semi-transparent: set albedo_color with alpha < 1 (e.g. "a":0.5). Do NOT pass a "transparency" key — alpha in albedo_color is what creates transparency.
-- Presets via op="apply_preset": metal, glass, emissive, unlit, matte, ceramic, wood, plastic. Example: params={"node_path":"/Node3D/Ball","preset":"metal"}.
-- Color values are 0.0 to 1.0, NOT 0-255. red={"r":1,"g":0,"b":0,"a":1}, white={"r":1,"g":1,"b":1,"a":1}, gray={"r":0.5,"g":0.5,"b":0.5,"a":1}.
-- SHADERS need a 3-step flow (see the shader doc below) — a .gdshader file must exist with code BEFORE a ShaderMaterial can use it.
-- TWO MATERIAL TYPES, different params: StandardMaterial3D uses albedo_color/metallic/roughness/emission. ShaderMaterial uses SHADER UNIFORMS via op="set_shader_param" — it does NOT have albedo_color. Never call apply_to_node with albedo_color on a node that has a ShaderMaterial; that fails with "Property 'albedo_color' not found on ShaderMaterial".
-- READING material state: to inspect a node's material, prefer reading the resource godot://node/{path}/properties or godot://materials, OR node_get_properties. Do NOT call op="get" with a node path — get/set_param expect a res:// .tres file path, not a scene node path.
-- material_manage ops (official): create, set_param, set_shader_param, get, list, assign, apply_to_node, apply_preset.
-- material_manage uses op + params (nested object), never flat arguments.`,
+    systemPrompt: `MATERIAL MODE (Godot 4.6) — verified tool contracts:
+- To color a mesh, use material_manage op="apply_to_node". The material values go in a params object INSIDE params. Shape: params={"node_path":"/Node3D/Floor","params":{"albedo_color":{"r":1,"g":0,"b":0,"a":1}}}.
+- Color channels are 0.0 to 1.0 (not 0-255). Alpha < 1 makes it semi-transparent.
+- To put an existing material file on a node, use node_set_property path="...", property="material_override", value="res://materials/your.tres".
+- A shader lives in a .gdshader text file made with filesystem_manage op="write_text". See the shader doc.`,
     docs: [
-      `MATERIAL: Changing the color of a MeshInstance3D (fastest method).
-FACT: color is a MATERIAL property, NOT a node property. node_set_property with albedo_color on a MeshInstance3D FAILS. Use material_manage op="apply_to_node" instead.
-Put node_path and the material properties directly inside params.
-Example: paint Floor red → op="apply_to_node", params={"node_path":"/Node3D/Floor","albedo_color":{"r":1,"g":0,"b":0,"a":1}}.
-The color values are EXAMPLES — adapt to what the user asks. Do NOT add "slot", "type", or "transparency" inside params — only real material properties like albedo_color, metallic, roughness. Works even if the node has no material yet.`,
+      `MATERIAL: Color a mesh (fastest, verified).
+material_manage op="apply_to_node", params={"node_path":"/Node3D/Floor","params":{"albedo_color":{"r":0,"g":1,"b":1,"a":1}}}.
+The inner params holds the material properties: albedo_color, metallic, roughness, emission. Cyan is {"r":0,"g":1,"b":1,"a":1}; adapt to the color asked.`,
 
-      `MATERIAL: Making something semi-transparent.
-Transparency comes from the alpha channel of albedo_color, not a separate flag.
-Example: half-transparent gray → op="apply_to_node", params={"node_path":"/Node3D/Cube3","albedo_color":{"r":0.5,"g":0.5,"b":0.5,"a":0.5}}.
-The "a" value below 1.0 makes it see-through. Never pass a "transparency" key.`,
+      `MATERIAL: Make a mesh semi-transparent.
+material_manage op="apply_to_node", params={"node_path":"/Node3D/Glass","params":{"albedo_color":{"r":0.7,"g":0.7,"b":0.9,"a":0.4}}}.
+Alpha (a) below 1 creates the transparency; no separate transparency flag is needed.`,
 
-      `MATERIAL: Using a preset look.
-material_manage op="apply_preset" applies a curated visual style to a node.
-Available presets: metal, glass, emissive, unlit, matte, ceramic, wood, plastic.
-Example: make Ball look metallic → op="apply_preset", params={"node_path":"/Node3D/Ball","preset":"metal"}.`,
+      `MATERIAL: Make a mesh metallic / shiny.
+material_manage op="apply_to_node", params={"node_path":"/Node3D/Ball","params":{"metallic":1.0,"roughness":0.15}}.
+High metallic + low roughness reads as polished metal.`,
 
-      `MATERIAL: Creating and using a SHADER (verified 4-step flow, order matters).
-FACT: a .gdshader is a TEXT file created with filesystem_manage op="write_text". NEVER use script_create for it — script_create only accepts .gd and fails with "Path must end with .gd". A ShaderMaterial needs the .gdshader file to EXIST before it can reference it.
-Step 1 — write the shader text file: filesystem_manage op="write_text", params={"path":"res://shaders/holographic.gdshader","content":"shader_type spatial;\\nrender_mode unshaded;\\nvoid fragment() {\\n\\tALBEDO = vec3(0.0, 1.0, 1.0);\\n\\tALPHA = 0.6;\\n}"}.
-Step 2 — make the editor import it: filesystem_manage op="reimport", params={"paths":["res://shaders/holographic.gdshader"]}.
-Step 3 — create a ShaderMaterial referencing it: material_manage op="create", params={"path":"res://materials/holographic.tres","type":"shader","shader_path":"res://shaders/holographic.gdshader","overwrite":true}.
-Step 4 — assign it to the node: material_manage op="assign", params={"node_path":"/Node3D/Ball","resource_path":"res://materials/holographic.tres"}.
-The ALBEDO/ALPHA values above are EXAMPLES — adapt them to the look the user wants. Set shader uniforms with op="set_shader_param".`,
-
-      `MATERIAL: Editing an existing .tres material file.
-Only use op="set_param" when a .tres file already exists. The path MUST end in .tres, .material, or .res — never a node path.
-Example: op="set_param", params={"path":"res://materials/floor.tres","param":"albedo_color","value":{"r":0,"g":0,"b":1,"a":1}}.`,
-
-      `MATERIAL: Making a material glow (emissive).
-Use op="apply_to_node" with emission properties inside params, or op="apply_preset" preset "emissive".
-Example: params={"node_path":"/Node3D/Ball","emission_enabled":true,"emission":{"r":0,"g":1,"b":1,"a":1},"emission_energy_multiplier":2.0}.`,
+      `MATERIAL: Create and apply a SHADER (verified flow).
+Step 1 — write the shader file: filesystem_manage op="write_text", params={"path":"res://shaders/holo.gdshader","content":"shader_type spatial;\\nvoid fragment() {\\n\\tALBEDO = vec3(0.0, 1.0, 1.0);\\n\\tALPHA = 0.6;\\n}"}.
+Step 2 — write a ShaderMaterial .tres pointing to it: filesystem_manage op="write_text", params={"path":"res://materials/holo.tres","content":"[gd_resource type=\\"ShaderMaterial\\" load_steps=2 format=3]\\n[ext_resource type=\\"Shader\\" path=\\"res://shaders/holo.gdshader\\" id=\\"1\\"]\\n[resource]\\nshader = ExtResource(\\"1\\")"}.
+Step 3 — assign it: node_set_property path="/Node3D/Card", property="material_override", value="res://materials/holo.tres".
+A 3D shader file must start with "shader_type spatial;". Adapt the ALBEDO/ALPHA to the look asked.`,
     ],
   },
 
   // ── ANIMATION ──────────────────────────────────────────────────────────────
   animation: {
     label: "Animation",
-    description: "Create animation clips, tracks, keyframes; play and preset animations.",
-    tools: ["animation_create", "animation_manage", "node_create", "node_find"],
-    systemPrompt: `ANIMATION MODE KNOWLEDGE (Godot 4.6):
-- IMPORTANT: animation_create AUTO-CREATES the AnimationPlayer and the animation library if they don't exist yet. You do NOT need to create the AnimationPlayer manually first — just call animation_create with a player_path and animation_name, and the server sets everything up. (This is a feature of the Godot AI server.)
-- animation_create: creates a NEW clip. params: player_path (where the AnimationPlayer should live, e.g. "/Node3D/AnimationPlayer"), name (clip name), optional length, loop_mode.
-- animation_manage ops (official list): player_create, delete, validate, add_property_track, add_method_track, set_autoplay, play, stop, list, get, create_simple, preset_fade, preset_slide, preset_shake, preset_pulse.
-- PRESETS are the easiest path (one call each): preset_pulse (scale bounce), preset_fade (alpha in/out), preset_slide (position), preset_shake. params include player_path, target_path, and the preset's options.
-- op="create_simple" builds a full multi-track clip in ONE call from tween specs — prefer it for simple animations over manual keyframe tracks.
-- Manual keyframes: op="add_property_track", params with player_path, animation_name, node_path, property, keyframes:[{time, value}]. Keyframe time is seconds; value matches the property type (Vector3 for position/rotation_degrees/scale).
-- After creating, op="set_autoplay" makes it run automatically, or op="play" for editor preview.`,
+    description: "Create animation clips and presets (pulse, fade, shake), play them.",
+    tools: ["animation_create", "animation_manage", "node_create"],
+    systemPrompt: `ANIMATION MODE (Godot 4.6) — verified tool contracts:
+- Make the player once: animation_manage op="player_create", params={"parent_path":"/Node3D","name":"AnimationPlayer"}.
+- Presets are the easy path. preset_pulse uses: player_path, target_path (absolute, e.g. "/Node3D/Ball"), to_scale, duration, animation_name.
+- Play with op="play", params={"player_path":"...","animation_name":"..."}.
+- The target of a preset is "target_path" and it is an absolute scene path.`,
     docs: [
-      `ANIMATION: Creating a movement animation from A to B.
-The AnimationPlayer is auto-created — you do not make it manually.
-Step 1: animation_create with params {"player_path":"/Node3D/AnimationPlayer","name":"Move","length":2.0}.
-Step 2: animation_manage op="add_property_track", params={"player_path":"/Node3D/AnimationPlayer","animation_name":"Move","node_path":"/Node3D/Ball","property":"position","keyframes":[{"time":0,"value":{"x":0,"y":0,"z":0}},{"time":2,"value":{"x":5,"y":0,"z":0}}]}.
-Step 3: animation_manage op="set_autoplay" (or "play") with params {"player_path":"/Node3D/AnimationPlayer","animation_name":"Move"}.`,
+      `ANIMATION: Create the AnimationPlayer (do this first).
+animation_manage op="player_create", params={"parent_path":"/Node3D","name":"AnimationPlayer"}.`,
 
-      `ANIMATION: Using a preset animation effect.
-op="preset_fade": fades a node in/out (modulate alpha). params: player_path, node_path, duration.
-op="preset_slide": slides node from offset to original position. params: player_path, node_path, direction ("left","right","up","down"), distance, duration.
-op="preset_shake": shakes a node. params: player_path, node_path, intensity, duration.
-op="preset_pulse": scales node up and back. params: player_path, node_path, scale_factor, duration.
-Example: shake the Ball → op="preset_shake", params={"player_path":"/Node3D/AnimationPlayer","node_path":"/Node3D/Ball","intensity":0.3,"duration":0.5}.`,
+      `ANIMATION: Make a node pulse (scale heartbeat).
+animation_manage op="preset_pulse", params={"player_path":"/Node3D/AnimationPlayer","target_path":"/Node3D/Ball","to_scale":1.2,"duration":2.0,"animation_name":"pulse"}.
+target_path is the node that pulses, as an absolute path. to_scale is the peak size.`,
 
-      `ANIMATION: Looping an animation.
-After creating the animation, set loop mode:
-animation_manage op="get" to inspect, then op="validate" to check keyframes.
-To set autoplay: op="set_autoplay", params={"player_path":"/Node3D/AnimationPlayer","animation_name":"Move","autoplay":true}.`,
+      `ANIMATION: Fade a node in/out.
+animation_manage op="preset_fade", params={"player_path":"/Node3D/AnimationPlayer","target_path":"/Node3D/Ball","duration":1.0,"animation_name":"fade"}.`,
 
-      `ANIMATION: Rotating a node continuously (spin effect).
-Create an animation with rotation_degrees track:
-keyframes: [{"time":0,"value":{"x":0,"y":0,"z":0}}, {"time":2,"value":{"x":0,"y":360,"z":0}}]
-Set loop mode and autoplay for continuous spin.`,
+      `ANIMATION: Play an animation.
+animation_manage op="play", params={"player_path":"/Node3D/AnimationPlayer","animation_name":"pulse"}.
+Use op="set_autoplay" instead to make it run on scene start.`,
     ],
   },
 
   // ── UI ─────────────────────────────────────────────────────────────────────
   ui: {
     label: "UI",
-    description: "Build HUDs, menus, layouts, themes, and Control nodes.",
+    description: "Create and configure UI: labels, buttons, containers, signals.",
     tools: ["ui_manage", "theme_manage", "node_create", "node_set_property", "node_manage", "signal_manage"],
-    systemPrompt: `UI MODE KNOWLEDGE (Godot 4.6):
-- UI nodes inherit from Control. Common types: Label, Button, Panel, TextureRect, ProgressBar, HBoxContainer, VBoxContainer, GridContainer, MarginContainer, CenterContainer, ColorRect, RichTextLabel, LineEdit, SpinBox, CheckBox, OptionButton, TabContainer, ScrollContainer, PopupMenu, WindowDialog.
-- UI nodes live under a CanvasLayer or directly under the root for 2D/UI scenes.
-- ui_manage op="set_anchor_preset" places a Control in a corner or edge: presets are "top_left","top_right","bottom_left","bottom_right","center","full_rect","top_wide","bottom_wide","left_wide","right_wide".
-- ui_manage op="set_text" sets the text of a Label, Button, or RichTextLabel.
-- ui_manage op="build_layout" creates a full layout tree from a spec in one call.
-- theme_manage sets colors, fonts, font sizes, and styleboxes on a Theme resource.
-- To set a Label's text color: theme_manage op="set_color", params={"theme_path":"res://themes/hud.tres","class_name":"Label","name":"font_color","value":{"r":1,"g":1,"b":0,"a":1}}.
-- anchor presets control where the node sticks: bottom_right for score, top_left for health bar, center for menus.
-- Container nodes (HBox, VBox, Grid) auto-layout their children — no need to set positions manually.`,
+    systemPrompt: `UI MODE (Godot 4.6) — verified tool contracts:
+- UI nodes are Control nodes: Label, Button, Panel, VBoxContainer, HBoxContainer.
+- Create them with node_create type="Label" (etc.), parent_path pointing at a CanvasLayer or Control parent.
+- KEY: after node_create, the node's path is parent_path + "/" + name. If you created it under "/Node3D/Cube2" with name "Hello", its path is "/Node3D/Cube2/Hello" — use that full path in node_set_property.
+- Set text/size with node_set_property using path + property (e.g. property="text", value="Score: 0").
+- Position with ui_manage op="set_anchor_preset". Valid presets: top_left, top_right, center_top, center, center_bottom, bottom_left, bottom_right, full_rect, center_left, center_right (there is no plain "top" — use center_top).`,
     docs: [
-      `UI: Creating a HUD label in the corner.
-Step 1: node_create type="Label", name="ScoreLabel", parent_path="/Node3D" (or your CanvasLayer path).
-Step 2: ui_manage op="set_text", params={"path":"/Node3D/ScoreLabel","text":"Score: 0"}.
-Step 3: ui_manage op="set_anchor_preset", params={"path":"/Node3D/ScoreLabel","preset":"top_right"}.
-The label will stick to the top-right corner regardless of screen size.`,
+      `UI: Add a label and set its text.
+Step 1: node_create type="Label", name="ScoreLabel", parent_path="/Node3D".
+Step 2: the new path is "/Node3D/ScoreLabel". node_set_property path="/Node3D/ScoreLabel", property="text", value="Score: 0".
+If you parented it under another node, include that node in the path (parent_path + "/" + name).`,
 
-      `UI: Building a complete HUD layout in one call.
-ui_manage op="build_layout" accepts a tree spec and creates all nodes at once.
-Example spec: {"type":"MarginContainer","name":"HUD","parent":"/Node3D","children":[{"type":"HBoxContainer","children":[{"type":"Label","name":"HealthLabel","text":"HP: 100"},{"type":"Label","name":"ScoreLabel","text":"Score: 0"}]}]}.`,
+      `UI: Add a button.
+node_create type="Button", name="PlayButton", parent_path="/Node3D".
+node_set_property path="/Node3D/PlayButton", property="text", value="Play".`,
 
-      `UI: Styling text with theme_manage.
-Step 1: theme_manage op="create", params={"path":"res://themes/hud.tres"}.
-Step 2: theme_manage op="set_font_size", params={"theme_path":"res://themes/hud.tres","class_name":"Label","name":"font_size","value":24}.
-Step 3: theme_manage op="set_color", params={"theme_path":"res://themes/hud.tres","class_name":"Label","name":"font_color","value":{"r":1,"g":1,"b":0,"a":1}}.
-Step 4: theme_manage op="apply", params={"theme_path":"res://themes/hud.tres","node_path":"/Node3D/HUD"}.`,
-
-      `UI: Creating a button with a signal.
-Step 1: node_create type="Button", name="StartButton", parent_path="/Node3D".
-Step 2: ui_manage op="set_text", params={"path":"/Node3D/StartButton","text":"Start Game"}.
-Step 3: ui_manage op="set_anchor_preset", params={"path":"/Node3D/StartButton","preset":"center"}.
-Step 4: signal_manage op="connect", params={"source_path":"/Node3D/StartButton","signal":"pressed","target_path":"/Node3D","method":"_on_start_pressed"}.`,
-
-      `UI: Progress bar (health bar, loading bar).
-node_create type="ProgressBar", name="HealthBar", parent_path="/Node3D".
-node_set_property path="/Node3D/HealthBar", property="min_value", value=0.
-node_set_property path="/Node3D/HealthBar", property="max_value", value=100.
-node_set_property path="/Node3D/HealthBar", property="value", value=75.
-ui_manage op="set_anchor_preset", params={"path":"/Node3D/HealthBar","preset":"top_wide"}.`,
+      `UI: Connect a button press to a method.
+signal_manage op="connect", params={"source_path":"/Node3D/PlayButton","signal":"pressed","target_path":"/Node3D","method":"_on_play_pressed"}.`,
     ],
   },
 
   // ── SCRIPT ─────────────────────────────────────────────────────────────────
   script: {
     label: "Script",
-    description: "Write and attach GDScript, manage signals, autoloads, and input maps.",
-    tools: ["script_create", "script_patch", "script_attach", "script_manage", "signal_manage", "autoload_manage", "input_map_manage"],
-    systemPrompt: `SCRIPT MODE KNOWLEDGE (Godot 4.6):
-- GDScript files use extension .gd and start with "extends ClassName".
-- CRITICAL: the "extends" class MUST match (or be a parent of) the target node's type. If you attach a script to a MeshInstance3D, write "extends MeshInstance3D" — not "extends Node3D" generically — so the script can access that node's properties (e.g. rotation_degrees, material_override). When unsure of the node's type, read it first with node_get_properties.
-- script_create: creates a .gd file at a res:// path with content. ALWAYS precedes script_attach.
-- script_attach: attaches the .gd file to a node. path = node path in scene, script_path = res:// path.
-- script_patch: edits an existing .gd file with anchor-based string replacement. Safer than rewriting the whole file.
-- Common base classes: Node3D (3D objects), MeshInstance3D (visible meshes), Node2D (2D), CharacterBody3D (physics character), RigidBody3D (physics), Control (UI), Node (generic).
-- _ready() runs once when the node enters the scene tree. _process(delta) runs every frame. _physics_process(delta) runs at a fixed rate. Use _process for visual/continuous motion (e.g. spinning), _physics_process for movement with collisions.
-- To spin a node continuously: in _process(delta), do rotation_degrees.y += speed * delta. Expose tunable values with @export var speed: float = 90.0.
-- Input: Input.is_action_pressed("ui_left"), Input.get_axis("move_left","move_right").
-- Signals: signal_manage op="connect" links a signal from source node to a method on target node.
-- Newlines in content must be literal \\n (escaped). Indentation uses tabs (\\t), not spaces.
-- autoload_manage adds global singletons accessible from any script via their name.`,
+    description: "Write and attach GDScript, manage signals and autoloads.",
+    tools: ["script_create", "script_patch", "script_attach", "script_manage", "signal_manage", "autoload_manage"],
+    systemPrompt: `SCRIPT MODE (Godot 4.6) — verified tool contracts:
+- script_create writes a .gd file: params with path (res://scripts/x.gd) and content.
+- script_attach puts a script on a node: params with node_path and script_path.
+- Inside GDScript, vectors are written as Vector3(x,y,z) (GDScript code, different from tool values which are JSON).`,
     docs: [
-      `SCRIPT: Adding a movement script to a CharacterBody3D.
-Step 1: script_create path="res://scripts/player.gd", content="extends CharacterBody3D\\n\\nconst SPEED = 5.0\\nconst JUMP_VELOCITY = 4.5\\n\\nfunc _physics_process(delta: float) -> void:\\n\\tvar direction = Input.get_vector(\\"move_left\\", \\"move_right\\", \\"move_forward\\", \\"move_back\\")\\n\\tif direction:\\n\\t\\tvelocity.x = direction.x * SPEED\\n\\t\\tvelocity.z = direction.y * SPEED\\n\\telse:\\n\\t\\tvelocity.x = move_toward(velocity.x, 0, SPEED)\\n\\t\\tvelocity.z = move_toward(velocity.z, 0, SPEED)\\n\\tif not is_on_floor():\\n\\t\\tvelocity += get_gravity() * delta\\n\\tif Input.is_action_just_pressed(\\"ui_accept\\") and is_on_floor():\\n\\t\\tvelocity.y = JUMP_VELOCITY\\n\\tmove_and_slide()".
-Step 2: script_attach path="/Node3D/Player", script_path="res://scripts/player.gd".`,
+      `SCRIPT: Create and attach a script that spins a node.
+Step 1: script_create params={"path":"res://scripts/spin.gd","content":"extends Node3D\\n\\n@export var speed: float = 90.0\\n\\nfunc _process(delta: float) -> void:\\n\\trotation_degrees.y += speed * delta"}.
+Step 2: script_attach params={"node_path":"/Node3D/Ball","script_path":"res://scripts/spin.gd"}.
+@export makes "speed" editable in the Inspector.`,
 
-      `SCRIPT: Simple rotating object script.
-script_create path="res://scripts/rotator.gd", content="extends Node3D\\n\\n@export var speed: float = 90.0\\n\\nfunc _process(delta: float) -> void:\\n\\trotation_degrees.y += speed * delta".
-script_attach path="/Node3D/Ball", script_path="res://scripts/rotator.gd".
-The @export keyword makes "speed" editable in the Godot Inspector.`,
-
-      `SCRIPT: Connecting a signal between two nodes.
-signal_manage op="connect", params={"source_path":"/Node3D/Button","signal":"pressed","target_path":"/Node3D","method":"_on_button_pressed"}.
-The method _on_button_pressed must exist in the target node's script.
-To add the method: script_patch the target script with the new function.`,
-
-      `SCRIPT: Adding an autoload (global singleton).
-autoload_manage op="add", params={"name":"GameManager","path":"res://scripts/game_manager.gd"}.
-Any script can then access it as: GameManager.some_method() or GameManager.some_variable.
-Create the script first with script_create before adding it as autoload.`,
-
-      `SCRIPT: Patching an existing script (adding a method without rewriting).
-script_patch anchor="# END" (or any unique string in the file), insert="\\nfunc take_damage(amount: int) -> void:\\n\\thealth -= amount\\n\\tif health <= 0:\\n\\t\\tqueue_free()".
-script_patch is safer than script_create when the file already has logic you want to keep.`,
+      `SCRIPT: Connect a signal via tool.
+signal_manage op="connect", params={"source_path":"/Node3D/Btn","signal":"pressed","target_path":"/Node3D","method":"_on_btn"}.`,
     ],
   },
 
   // ── SCENE ──────────────────────────────────────────────────────────────────
   scene: {
     label: "Scene",
-    description: "Open/save scenes, run the project, manage camera, audio, and filesystem.",
+    description: "Open/save scenes, run the project, write files.",
     tools: ["scene_open", "scene_save", "scene_manage", "project_run", "project_manage", "camera_manage", "audio_manage", "filesystem_manage", "node_create", "node_set_property"],
-    systemPrompt: `SCENE MODE KNOWLEDGE (Godot 4.6):
-- scene_save: saves the currently open scene to disk. No params needed. Always call after making changes.
-- scene_open: opens a .tscn file by res:// path. Switches the active scene in the editor.
-- project_run: runs the project from the editor. mode="main" runs the main scene, mode="current" runs the open scene.
-- project_manage op="stop" stops a running project. op="settings_get" / op="settings_set" reads/writes project.godot settings.
-- camera_manage: create and configure Camera3D or Camera2D. op="create", op="configure" (fov, projection, near, far), op="follow_2d", op="get", op="list".
-- audio_manage: create AudioStreamPlayer nodes and assign streams. op="player_create", op="player_set_stream", op="play", op="stop", op="list".
-- filesystem_manage: op="read_text" reads a file, op="write_text" writes a file, op="search" finds files by pattern, op="reimport" forces re-import of an asset.
-- scene_manage op="create" creates a new .tscn file. op="save_as" saves current scene to a new path. op="get_roots" lists all open scene roots.
-- Camera FOV default is 75. Near clip 0.05, far clip 4000.`,
+    systemPrompt: `SCENE MODE (Godot 4.6) — verified tool contracts:
+- Save the scene after edits: scene_save (no params needed for the current scene).
+- Write any text file: filesystem_manage op="write_text", params={"path":"res://...","content":"..."}.
+- Run the project with project_run.`,
     docs: [
-      `SCENE: Saving and running the project.
-scene_save → saves current scene.
-project_run mode="current" → runs the currently open scene.
-project_run mode="main" → runs from the main scene defined in project settings.
-project_manage op="stop" → stops the running project.`,
+      `SCENE: Save the current scene.
+scene_save. Call it after making changes you want to persist.`,
 
-      `SCENE: Configuring the Camera3D.
-camera_manage op="configure", params={"path":"/Node3D/Camera3D","fov":60,"projection":"perspective"}.
-To follow a target in 3D: position the camera with node_set_property and point it using rotation_degrees.
-Common FOV values: 60 (cinematic), 75 (default), 90 (wide/FPS).`,
-
-      `SCENE: Adding background music.
-Step 1: node_create type="AudioStreamPlayer", name="Music", parent_path="/Node3D".
-Step 2: audio_manage op="player_set_stream", params={"path":"/Node3D/Music","stream_path":"res://audio/music.ogg"}.
-Step 3: node_set_property path="/Node3D/Music", property="autoplay", value=true.
-Step 4: scene_save.`,
-
-      `SCENE: Reading and writing project files.
-filesystem_manage op="read_text", params={"path":"res://data/config.json"} → returns file content.
-filesystem_manage op="write_text", params={"path":"res://data/config.json","content":"{\"level\":1}"} → writes file.
-filesystem_manage op="search", params={"pattern":"*.gd"} → finds all GDScript files in project.`,
-
-      `SCENE: Creating a new scene from scratch.
-scene_manage op="create", params={"root_type":"Node3D","name":"Level2","path":"res://scenes/level2.tscn"}.
-Then add nodes to it with node_create using parent_path="/Level2".
-scene_save when done.`,
+      `SCENE: Write a text/data file.
+filesystem_manage op="write_text", params={"path":"res://data/config.json","content":"{}"}.`,
     ],
   },
 };
