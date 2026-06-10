@@ -85,10 +85,11 @@ material_manage op="apply_to_node", params={"node_path":"/Node3D/Ball","params":
 High metallic + low roughness reads as polished metal.`,
 
       `MATERIAL: Create and apply a SHADER (verified flow).
-Step 1 — write the shader file: filesystem_manage op="write_text", params={"path":"res://shaders/holo.gdshader","content":"shader_type spatial;\\nvoid fragment() {\\n\\tALBEDO = vec3(0.0, 1.0, 1.0);\\n\\tALPHA = 0.6;\\n}"}.
+Step 1 — write the shader file in ONE LINE (no line breaks): filesystem_manage op="write_text", params={"path":"res://shaders/holo.gdshader","content":"shader_type spatial; void fragment() { ALBEDO = vec3(0.0, 1.0, 1.0); ALPHA = 0.6; }"}.
+CRITICAL: write the whole shader on a SINGLE line, separating statements with "; " and spaces. Do NOT put \\n or tabs inside content — they break the call. GLSL works fine on one line.
 Step 2 — write a ShaderMaterial .tres pointing to it: filesystem_manage op="write_text", params={"path":"res://materials/holo.tres","content":"[gd_resource type=\\"ShaderMaterial\\" load_steps=2 format=3]\\n[ext_resource type=\\"Shader\\" path=\\"res://shaders/holo.gdshader\\" id=\\"1\\"]\\n[resource]\\nshader = ExtResource(\\"1\\")"}.
 Step 3 — assign it: node_set_property path="/Node3D/Card", property="material_override", value="res://materials/holo.tres".
-A 3D shader file must start with "shader_type spatial;". Adapt the ALBEDO/ALPHA to the look asked.`,
+A 3D shader file must start with "shader_type spatial;" and should be written on ONE line (no \\n). Adapt the ALBEDO/ALPHA to the look asked.`,
     ],
   },
 
@@ -182,9 +183,42 @@ scene_save. Call it after making changes you want to persist.`,
 filesystem_manage op="write_text", params={"path":"res://data/config.json","content":"{}"}.`,
     ],
   },
+
+  // ── BATCH ────────────────────────────────────────────────────────────────────
+  batch: {
+    label: "Batch",
+    description: "Build several nodes at once atomically (create many objects, structures).",
+    tools: ["batch_execute", "filesystem_manage", "scene_get_hierarchy"],
+    systemPrompt: `BATCH MODE (Godot 4.6) — build many things in ONE atomic call.
+batch_execute runs a list of commands in order and ROLLS BACK all of them if any fails.
+TWO CRITICAL RULES (verified against the server):
+1. Each item uses the key "command" (NOT "tool"), and the value is a PLUGIN command name,
+   NOT an MCP tool name. Use: create_node, set_property, duplicate_node (NOT node_create / node_set_property).
+2. Each item is {"command":<PLUGIN_CMD>, "params":{...}}. The params are the same fields the
+   single tool would take.
+A node created earlier in the batch CAN be referenced by later commands in the same batch
+(its path is parent_path + "/" + name).
+For meshes inside a batch, set the "mesh" property to a .tres resource path you have written
+with filesystem_manage BEFORE the batch (inline mesh objects are unreliable).`,
+    docs: [
+      `BATCH: Create several cubes at once.
+First (outside the batch) write a mesh resource once: filesystem_manage op="write_text", params={"path":"res://meshes/box.tres","content":"[gd_resource type=\\"BoxMesh\\" format=3]\\n[resource]"}.
+Then: batch_execute params={"commands":[
+  {"command":"create_node","params":{"type":"MeshInstance3D","name":"Cube1","parent_path":"/Node3D"}},
+  {"command":"set_property","params":{"path":"/Node3D/Cube1","property":"mesh","value":"res://meshes/box.tres"}},
+  {"command":"create_node","params":{"type":"MeshInstance3D","name":"Cube2","parent_path":"/Node3D"}},
+  {"command":"set_property","params":{"path":"/Node3D/Cube2","property":"mesh","value":"res://meshes/box.tres"}},
+  {"command":"set_property","params":{"path":"/Node3D/Cube2","property":"position","value":{"x":0,"y":1,"z":0}}}
+]}.
+Note: commands use create_node / set_property (plugin names), and "command" not "tool".`,
+
+      `BATCH: Stack cubes into a tower.
+Write the mesh .tres first, then one create_node + set_property(mesh) + set_property(position) per cube, all in the commands array. Increment the Y position for each: 0, 1, 2, 3...`,
+    ],
+  },
 };
 
-export const ACTIVE_MODES = ["transform", "material", "animation", "ui", "script", "scene"];
+export const ACTIVE_MODES = ["transform", "material", "animation", "ui", "script", "scene", "batch"];
 export const DEFAULT_MODE  = "transform";
 
 export function toolsForMode(modeName) {

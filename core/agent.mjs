@@ -4,6 +4,7 @@ import { callTool, getTools } from "./mcp.mjs";
 import { appendLog }          from "./logger.mjs";
 import { searchDocs, getLastSearch } from "./rag.mjs";
 import { toolsForMode, DEFAULT_MODE, isValidMode, MODES, systemPromptForMode } from "./modes.mjs";
+import { contractFor }        from "./tool-contracts.mjs";
 import { config }             from "../config/config.mjs";
 
 let _history = [];
@@ -179,15 +180,30 @@ export function getMode() { return _mode; }
 function _buildTools(tools) {
   const allowed  = toolsForMode(_mode);
   const filtered = tools.filter(t => allowed.includes(t.name));
-  return filtered.map(t => ({
-    name:        t.name,
-    description: (t.description ?? t.name).slice(0, 600),
-    parameters:  t.inputSchema ?? {
-      type: "object",
-      properties: {},
-      additionalProperties: true,
-    },
-  }));
+  return filtered.map(t => {
+    // Preferimos NUESTRO contrato curado (description + schema mínimo y limpio).
+    // Así controlamos exactamente lo que el modelo recibe, en vez del inputSchema
+    // crudo de Godot (ruidoso y pobre). Si una tool no tiene contrato curado en
+    // este modo, caemos a un fallback seguro (descripción de Godot recortada +
+    // esquema genérico abierto).
+    const curated = contractFor(_mode, t.name);
+    if (curated) {
+      return {
+        name:        t.name,
+        description: curated.description,
+        parameters:  curated.schema ?? { type: "object", properties: {}, additionalProperties: true },
+      };
+    }
+    return {
+      name:        t.name,
+      description: (t.description ?? t.name).slice(0, 200),
+      parameters:  t.inputSchema ?? {
+        type: "object",
+        properties: {},
+        additionalProperties: true,
+      },
+    };
+  });
 }
 
 export async function runInstruction(instruction, onToken, onToolCall, onDebug) {
