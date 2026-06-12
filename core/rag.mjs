@@ -20,7 +20,7 @@ import {
 } from "@qvac/sdk";
 
 import { config }     from "../config/config.mjs";
-import { getTools }   from "./mcp.mjs";
+import { allContractDocs } from "./tool-contracts.mjs";
 import { appendLog }  from "./logger.mjs";
 import { GODOT_DOCS } from "./godot-docs.mjs";
 import { allModeDocs } from "./modes.mjs";
@@ -29,25 +29,22 @@ let _embModelId = null;
 let _ready      = false;
 let _lastSearch = [];   // diagnósticos de la última búsqueda RAG (para panel debug)
 
-// Construye el corpus a ingerir: descripciones COMPLETAS de las tools MCP
-// (sin el truncado a 600 que aplica el agente) + el corpus curado de Godot.
+// Construye el corpus a ingerir. SOLO conocimiento NUESTRO y curado:
+//   • contractDocs: la descripción curada de cada tool, por modo (de tool-contracts.mjs).
+//   • modeDocs:     los ejemplos curados de cada modo (de modes.mjs), etiquetados [MODE:xxx].
+// NO ingerimos el inputSchema/description CRUDO de Godot: es ruidoso y pobre, y es
+// justo lo que tool-contracts.mjs reemplaza. Indexar el crudo ensuciaba el índice
+// con ~40 docs genéricos ("params/node/path") que el embedder confundía con todo.
+// Resultado: índice pequeño y limpio, todo del mismo vocabulario que usa el agente.
 function _buildCorpus() {
-  const tools = getTools();
+  const contractDocs = allContractDocs();   // nuestras descripciones curadas, por modo
+  const modeDocs     = allModeDocs();        // ejemplos curados, por modo
 
-  const toolDocs = tools.map(t => {
-    const schema = t.inputSchema ? JSON.stringify(t.inputSchema) : "{}";
-    const desc   = t.description ?? "";
-    // El nombre de la tool va al frente Y repetido en una línea de propósito,
-    // para que el embedding capture claramente "de qué trata" este documento.
-    // Sin chunking, cada tool es UN documento completo e indivisible.
-    return `TOOL: ${t.name}\nPURPOSE: ${t.name} — ${desc.split("\n")[0]}\n\nFULL DESCRIPTION:\n${desc}\n\nPARAMETERS SCHEMA: ${schema}`;
-  });
+  const base = [...contractDocs, ...modeDocs];
 
-  // Docs específicos por modo (casos curados, etiquetados [MODE:xxx]).
-  const modeDocs = allModeDocs();
-
-  // Los docs curados de clases Godot son opcionales (config.rag.includeGodotDocs).
-  const base = [...toolDocs, ...modeDocs];
+  // Docs de clases Godot: conocimiento de apoyo opcional (sin prefijo de modo, se
+  // conservan siempre en el filtro). Útiles para preguntas de API que no cubren
+  // los contratos. Controlado por config.rag.includeGodotDocs.
   if (config.rag?.includeGodotDocs) {
     return [...base, ...GODOT_DOCS];
   }
@@ -103,7 +100,7 @@ export async function initRag(onProgress) {
 // Busca los fragmentos más relevantes para una consulta. Devuelve un array de
 // strings (el contenido de cada fragmento). Si RAG no está listo o el workspace
 // no existe, devuelve [] sin lanzar (ragSearch devuelve [] en ese caso).
-export async function searchDocs(query, allowedTools = null) {
+export async function searchDocs(query, allowedTools = null, activeMode = null) {
   if (!_ready || !_embModelId) return [];
 
   try {
@@ -121,15 +118,20 @@ export async function searchDocs(query, allowedTools = null) {
 
     let raw = results ?? [];
 
-    // Filtro de modo: cada documento empieza con "TOOL: <nombre>". Conservamos
-    // solo los de tools permitidas en el modo activo. Los docs de Godot (que no
-    // empiezan con TOOL:) se conservan siempre como conocimiento de apoyo.
+    // Filtro de modo. En el corpus nuevo, TODO doc curado lleva el prefijo
+    // "[MODE:<nombre>]" en su primera línea — tanto los contratos de tool
+    // ("[MODE:input] CONTRACT input_map_manage:") como los ejemplos
+    // ("[MODE:input] INPUT: Set up WASD..."). Los docs de Godot no llevan prefijo
+    // (apoyo, siempre se conservan). Conservamos un doc si: es del modo activo,
+    // O es doc de Godot sin prefijo.
     if (allowedTools) {
       raw = raw.filter(r => {
         const first = (r.content ?? "").split("\n")[0];
-        const m = first.match(/^TOOL:\s*(\S+)/);
-        if (!m) return true;                       // no es un doc de tool → conservar
-        return allowedTools.includes(m[1]);        // es de tool → solo si está permitida
+        const modeMatch = first.match(/^\[MODE:\s*(\S+?)\]/);
+        if (modeMatch) {
+          return activeMode ? modeMatch[1] === activeMode : true;
+        }
+        return true;   // sin prefijo de modo → doc de Godot, se conserva
       }).slice(0, baseTopK);
     }
 

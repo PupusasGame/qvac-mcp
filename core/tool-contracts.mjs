@@ -365,3 +365,20 @@ Mesh: op="write_text", params={"path":"res://meshes/<NAME>.tres","content":"[gd_
 export function contractFor(modeName, toolName) {
   return CONTRACTS[modeName]?.[toolName] ?? null;
 }
+
+// Emite los contratos curados como documentos RAG, etiquetados por modo.
+// Cada doc lleva el prefijo "[MODE:<modo>] CONTRACT <tool>:" para que:
+//   • el embedding capture claramente de qué tool y modo trata, y
+//   • el filtro por modo de searchDocs lo conserve/descple igual que los docs[].
+// Esto reemplaza a los toolDocs CRUDOS de Godot: indexamos NUESTRA descripción
+// limpia (la misma que recibe el modelo), no el inputSchema ruidoso del server.
+export function allContractDocs() {
+  const out = [];
+  for (const [modeName, tools] of Object.entries(CONTRACTS)) {
+    for (const [toolName, contract] of Object.entries(tools)) {
+      const desc = contract?.description ?? "";
+      out.push(`[MODE:${modeName}] CONTRACT ${toolName}:\n${desc}`);
+    }
+  }
+  return out;
+}

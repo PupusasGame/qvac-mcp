@@ -228,7 +228,7 @@ export async function runInstruction(instruction, onToken, onToolCall, onDebug) 
   let ragDocs   = [];   // guardamos los docs recuperados para el log de inferencia
   try {
     const allowedTools = toolsForMode(_mode);
-    const docs = await searchDocs(instruction, allowedTools);
+    const docs = await searchDocs(instruction, allowedTools, _mode);
     ragDocs = docs;
     if (docs.length) {
       docsBlock =
