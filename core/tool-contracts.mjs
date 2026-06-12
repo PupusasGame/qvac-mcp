@@ -214,8 +214,8 @@ ops: set_color, set_font_size. params include path=<NODE_PATH> plus the value.`,
     signal_manage: {
       description:
 `Connect a node signal to a method. Args: op + params.
-op="connect", params={"source_path":<NODE_PATH>, "signal":<SIGNAL_NAME>, "target_path":<NODE_PATH>, "method":<METHOD_NAME>}.
-Example signal for a Button: "pressed".`,
+op="connect", params={"path":<SOURCE_NODE_PATH>, "signal":<SIGNAL_NAME>, "target":<RECEIVER_NODE_PATH>, "method":<METHOD_NAME>}.
+"path" is the node that emits the signal; "target" is the node whose method runs. Example signal for a Button: "pressed".`,
       schema: S.opParams,
     },
   },
@@ -234,20 +234,23 @@ GDScript content uses real syntax: extends <CLASS>, func _ready():, Vector3(<x>,
       schema: S.opParams,
     },
     script_patch: {
-      description: `Edit part of an existing script. Args: op + params (path of the script plus the change).`,
+      description: `Find-and-replace text in an existing script. Args: params={"path":"res://scripts/<NAME>.gd", "old_text":<EXACT_TEXT_TO_FIND>, "new_text":<REPLACEMENT>}. Replaces the exact old_text with new_text (e.g. change a default value or add a line).`,
       schema: S.opParams,
     },
     script_manage: {
-      description: `Manage scripts (list, remove, reload). Args: op + params.`,
+      description: `Inspect or manage scripts. Args: op + params.
+op="find_symbols", params={"path":"res://scripts/<NAME>.gd"} returns the script's extends, functions, exports and signals with their line numbers — useful before patching.`,
       schema: S.opParams,
     },
     signal_manage: {
       description:
-`Connect a signal to a method. Args: op="connect", params={"source_path":<NODE_PATH>, "signal":<SIGNAL_NAME>, "target_path":<NODE_PATH>, "method":<METHOD_NAME>}.`,
+`Connect a signal to a method. Args: op="connect", params={"path":<SOURCE_NODE_PATH>, "signal":<SIGNAL_NAME>, "target":<RECEIVER_NODE_PATH>, "method":<METHOD_NAME>}. "path" emits, "target" receives.`,
       schema: S.opParams,
     },
     autoload_manage: {
-      description: `Register/remove an autoload (singleton). Args: op + params, with name=<NAME> and path=<RES_PATH>.`,
+      description: `Register an autoload (global singleton). Args: op + params.
+op="add", params={"name":<SINGLETON_NAME>, "path":"res://scripts/<NAME>.gd", "singleton":true} registers it (saved to project.godot).
+op="list" returns the current autoloads. The name becomes a global accessible from any script.`,
       schema: S.opParams,
     },
   },
