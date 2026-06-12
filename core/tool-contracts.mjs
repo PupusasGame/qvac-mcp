@@ -298,6 +298,41 @@ Write any text file: op="write_text", params={"path":"res://<PATH>", "content":<
     },
   },
 
+  // ── INPUT ────────────────────────────────────────────────────────────────────
+  input: {
+    input_map_manage: {
+      description:
+`Define input actions and bind keys to them (for player controls like WASD). Args: op + params.
+Add an action: op="add_action", params={"action":<ACTION_NAME>}. (deadzone defaults to 0.5.)
+Bind a key to it: op="bind_event", params={"action":<ACTION_NAME>, "event_type":"key", "keycode":<KEY>}.
+<KEY> is the letter/name of the key as a string: "W", "A", "S", "D", "Space", "Enter".
+Actions and bindings are saved to project.godot. Add the action first, then bind one or more keys to it.`,
+      schema: S.opParams,
+    },
+  },
+
+  // ── EFFECTS ──────────────────────────────────────────────────────────────────
+  effects: {
+    particle_manage: {
+      description:
+`Create particle emitters and apply ready-made looks. Args: op + params.
+Create an emitter: op="create", params={"parent_path":<PARENT_PATH>, "name":<NAME>, "type":"gpu_3d"}.
+  This makes a GPUParticles3D node with its draw + process materials set up automatically.
+Apply a ready look: op="apply_preset", params={"parent_path":<PARENT_PATH>, "name":<NAME>, "type":"gpu_3d", "preset":<PRESET>}.
+  Verified preset: "fire". apply_preset creates the node itself, so point parent_path/name at where you want it.`,
+      schema: S.opParams,
+    },
+    resource_manage: {
+      description:
+`Create reusable resource files: gradients, noise textures, environments (great for visual flair). Args: op + params.
+Gradient texture: op="gradient_texture_create", params={"resource_path":"res://<NAME>.tres", "stops":[<STOPS>]}.
+Noise texture:    op="noise_texture_create",    params={"resource_path":"res://<NAME>.tres"}. (FastNoiseLite, simplex_smooth.)
+Environment:      op="environment_create",      params={"resource_path":"res://<NAME>.tres", "preset":"default"}.
+Each writes a .tres file to disk (persistent — not undoable). Assign it afterwards where it's needed.`,
+      schema: S.opParams,
+    },
+  },
+
   // ── BATCH ────────────────────────────────────────────────────────────────────
   batch: {
     batch_execute: {

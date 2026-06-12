@@ -184,6 +184,64 @@ filesystem_manage op="write_text", params={"path":"res://data/config.json","cont
     ],
   },
 
+  // ── INPUT ──────────────────────────────────────────────────────────────────
+  input: {
+    label: "Input",
+    description: "Define input actions and bind keys (player controls like WASD).",
+    tools: ["input_map_manage"],
+    systemPrompt: `INPUT MODE (Godot 4.6) — verified tool contracts:
+- An input action is a NAMED control (e.g. "move_forward") that one or more keys trigger.
+- Create the action first: input_map_manage op="add_action", params={"action":"move_forward"}.
+- Then bind a key to it: input_map_manage op="bind_event", params={"action":"move_forward","event_type":"key","keycode":"W"}.
+- The keycode is the key as a string: "W", "A", "S", "D", "Space", "Enter". One action can have several keys.
+- Actions and their keys are saved to project.godot.`,
+    docs: [
+      `INPUT: Set up WASD movement actions.
+For each direction, add the action then bind its key (two calls per direction):
+Step 1: input_map_manage op="add_action", params={"action":"move_forward"}.
+Step 2: input_map_manage op="bind_event", params={"action":"move_forward","event_type":"key","keycode":"W"}.
+Repeat for "move_back"/"S", "move_left"/"A", "move_right"/"D".
+The keycode is the letter as a string. Add the action before binding its key.`,
+
+      `INPUT: Add a single action and key (e.g. jump on Space).
+Step 1: input_map_manage op="add_action", params={"action":"jump"}.
+Step 2: input_map_manage op="bind_event", params={"action":"jump","event_type":"key","keycode":"Space"}.`,
+    ],
+  },
+
+  // ── EFFECTS ────────────────────────────────────────────────────────────────
+  effects: {
+    label: "Effects",
+    description: "Particle emitters and visual resources: gradients, noise, environments.",
+    tools: ["particle_manage", "resource_manage"],
+    systemPrompt: `EFFECTS MODE (Godot 4.6) — verified tool contracts:
+- particle_manage makes GPUParticles3D emitters. Create one with op="create", params={"parent_path":<PARENT>,"name":<NAME>,"type":"gpu_3d"}.
+- For a ready-made look, op="apply_preset" with a "preset" (verified: "fire"). apply_preset CREATES the node, so set parent_path/name where you want it.
+- resource_manage writes reusable .tres files: gradient textures, noise textures, environments. Each takes a "resource_path" to save to.
+- These resource files are persistent on disk (not undoable). Create them, then assign where needed.`,
+    docs: [
+      `EFFECTS: Add a fire particle effect.
+particle_manage op="apply_preset", params={"parent_path":"/Node3D","name":"Fire","type":"gpu_3d","preset":"fire"}.
+This creates a GPUParticles3D named "Fire" under /Node3D with the fire look applied. Its path is then "/Node3D/Fire".`,
+
+      `EFFECTS: Create a plain particle emitter to configure yourself.
+particle_manage op="create", params={"parent_path":"/Node3D","name":"Sparks","type":"gpu_3d"}.
+The draw and process materials are set up automatically; the new node's path is "/Node3D/Sparks".`,
+
+      `EFFECTS: Make a gradient texture.
+resource_manage op="gradient_texture_create", params={"resource_path":"res://textures/grad.tres","stops":[{"offset":0,"color":{"r":1,"g":0,"b":0,"a":1}},{"offset":1,"color":{"r":0,"g":0,"b":1,"a":1}}]}.
+Colors are 0-1. Two stops make a two-color gradient; add more stops for more colors.`,
+
+      `EFFECTS: Make a noise texture (for terrain, clouds, distortion).
+resource_manage op="noise_texture_create", params={"resource_path":"res://textures/noise.tres"}.
+Uses FastNoiseLite (simplex_smooth). Assign the .tres where a texture is needed.`,
+
+      `EFFECTS: Create an environment resource (sky, fog, ambient light).
+resource_manage op="environment_create", params={"resource_path":"res://env/world.tres","preset":"default"}.
+Assign it to a WorldEnvironment node's "environment" property afterwards.`,
+    ],
+  },
+
   // ── BATCH ────────────────────────────────────────────────────────────────────
   batch: {
     label: "Batch",
@@ -218,7 +276,7 @@ Write the mesh .tres first, then one create_node + set_property(mesh) + set_prop
   },
 };
 
-export const ACTIVE_MODES = ["transform", "material", "animation", "ui", "script", "scene", "batch"];
+export const ACTIVE_MODES = ["transform", "material", "animation", "ui", "script", "scene", "batch", "input", "effects"];
 export const DEFAULT_MODE  = "transform";
 
 export function toolsForMode(modeName) {

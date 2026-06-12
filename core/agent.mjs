@@ -272,6 +272,7 @@ Read the current state when you need it, then act. Use tools to do the work — 
   • ERROR: it usually names the correct key or format. Adjust and try a DIFFERENT call — never repeat the same failing call.
 - For an ABSOLUTE value ("set Y to 45"), write it directly. For a RELATIVE change ("add 15", "a bit bigger"), read the current value first, compute the new one, then write it.
 - After you create a node, its path is parent_path + "/" + name. Use that exact path in the next call (e.g. created under "/Node3D" with name "Ball" → path is "/Node3D/Ball").
+- SCENE PATHS are relative to the EDITED scene root, which is "/Node3D" here. A path looks like "/Node3D/Ball" or a relative "Ball". NEVER use runtime "/root/..." paths — those fail. The scene root is the top node shown in the scene tree.
 - Summarize results in your own words; don't echo raw tool output.
 
 ═══ TOOL CALL FORMAT (two shapes) ═══
