@@ -21,43 +21,51 @@ export const MODES = {
     label: "Transform",
     description: "Move, rotate, scale, position nodes; create, duplicate, rename, delete nodes.",
     tools: ["node_set_property", "node_create", "node_find", "node_manage", "filesystem_manage", "batch_execute"],
-    systemPrompt: `TRANSFORM MODE (Godot 4.6) — verified tool contracts:
-- node_set_property uses: path, property, value. Example: path="/Node3D/Ball", property="position", value={"x":0,"y":1,"z":0}.
-- Vectors are JSON objects {"x":N,"y":N,"z":N}. A Node3D has position, rotation_degrees, scale.
-- node_create uses: type, name, parent_path. parent_path is relative to the scene root ("" means the root itself).
-- To make a VISIBLE shape: create a MeshInstance3D, write a mesh .tres file (e.g. BoxMesh) with filesystem_manage, then set the node's "mesh" property to that file path. Assigning an inline {"type":"BoxMesh"} object is unreliable — use the .tres file path.
-- For several known steps at once, use batch_execute (see its doc).`,
+    systemPrompt: `TRANSFORM MODE (Godot 4.6) — how the engine works here:
+
+FACT: A "visible object" in Godot is a MeshInstance3D node that has a MESH RESOURCE in its
+"mesh" property. A bare node with no mesh renders NOTHING. So when the user asks to create
+any named shape (a cube, a sphere, a plane, a floor, a wall…), creating it means giving it
+a mesh — not just making an empty node. Only create an empty node when the user explicitly
+asks for an empty/container node.
+
+FACT: The reliable way to give a node a mesh is a mesh resource FILE (.tres), then point the
+node's "mesh" property at that file. The mesh resource TYPE inside the file decides the shape
+— the node type is always MeshInstance3D; the shape comes from the mesh resource. Assigning
+an inline {"type":"BoxMesh"} object is unreliable and may render nothing — use the .tres file.
+
+Blueprint to create any visible shape (generalize the mesh type to the shape asked):
+  1. node_create type="MeshInstance3D", name=<NAME>, parent_path="".
+  2. filesystem_manage op="write_text", params={"path":"res://meshes/<NAME>.tres",
+     "content":"[gd_resource type=\\"<MESH_TYPE>\\" format=3]\\n[resource]"}.
+  3. node_set_property path="/Node3D/<NAME>", property="mesh", value="res://meshes/<NAME>.tres".
+Pick <MESH_TYPE> from the shape: a box/cube→BoxMesh, a ball/sphere→SphereMesh, a flat
+plane/floor→PlaneMesh, and so on. (Example with a box: type="BoxMesh". Apply the same shape
+of steps for any other mesh type.)
+
+FACT: Move / rotate / scale use node_set_property with a Vector3 value {"x":N,"y":N,"z":N}:
+  • position  — where it sits.   • rotation_degrees — its orientation.   • scale — its size.
+  Example: node_set_property path="/Node3D/<NAME>", property="position", value={"x":2,"y":0,"z":0}.
+For a relative change ("move it a bit", "add 15") read the current value first, then write the sum.`,
     docs: [
-      `TRANSFORM: Move a node to a position.
-node_set_property path="/Node3D/Ball", property="position", value={"x":3,"y":0,"z":0}.
-For a relative move, read the current position with node_get_properties first, then write the new value.`,
+      `TIP — mesh types for different shapes. The mesh resource type inside the .tres decides
+the shape: BoxMesh (cube/box), SphereMesh (ball), PlaneMesh (flat floor/wall), CylinderMesh,
+CapsuleMesh, PrismMesh, TorusMesh. Some accept a size: a sized plane uses content
+"[gd_resource type=\\"PlaneMesh\\" format=3]\\n[resource]\\nsize = Vector2(2, 2)".`,
 
-      `TRANSFORM: Rotate a node.
-node_set_property path="/Node3D/Ball", property="rotation_degrees", value={"x":0,"y":45,"z":0}.
-All three axes are required in the object. Y is the vertical-axis spin.`,
-
-      `TRANSFORM: Scale a node.
-node_set_property path="/Node3D/Ball", property="scale", value={"x":2,"y":2,"z":2}.`,
-
-      `TRANSFORM: Create a visible cube / sphere / plane / cylinder (verified 3-step flow).
-The reliable way is to create the mesh as a .tres resource file, then assign that file.
-Step 1: node_create type="MeshInstance3D", name="Cube", parent_path="".
-Step 2: filesystem_manage op="write_text", params={"path":"res://meshes/cube.tres","content":"[gd_resource type=\\"BoxMesh\\" format=3]\\n[resource]"}.
-Step 3: node_set_property path="/Node3D/Cube", property="mesh", value="res://meshes/cube.tres".
-Mesh resource types for step 2: BoxMesh (cube), SphereMesh, PlaneMesh (flat), CylinderMesh, CapsuleMesh, PrismMesh, TorusMesh. For a sized plane use content "[gd_resource type=\\"PlaneMesh\\" format=3]\\n[resource]\\nsize = Vector2(2, 2)".
-The node type is always MeshInstance3D; the shape comes from the mesh resource file.`,
-
-      `TRANSFORM: Duplicate a node and place the copy.
-Step 1: node_manage op="duplicate", params={"path":"/Node3D/Cube"}.
-Step 2: read the new node's path with scene_get_hierarchy (it is usually "<name>Copy").
+      `TIP — duplicate a node and place the copy.
+Step 1: node_manage op="duplicate", params={"path":"/Node3D/<NAME>"}.
+Step 2: read the new node's path with scene_get_hierarchy (the copy is usually "<NAME>Copy").
 Step 3: node_set_property on the copy to move it, e.g. property="position", value={"x":0,"y":1,"z":0}.`,
 
-      `TRANSFORM: Do several known steps atomically with batch_execute.
+      `TIP — do several known steps in one atomic batch with batch_execute.
 batch_execute params={"commands":[
-  {"command":"create_node","params":{"type":"MeshInstance3D","name":"Cube","parent_path":""}},
-  {"command":"set_property","params":{"path":"/Node3D/Cube","property":"mesh","value":{"type":"BoxMesh"}}}
+  {"command":"create_node","params":{"type":"MeshInstance3D","name":"<NAME>","parent_path":""}},
+  {"command":"set_property","params":{"path":"/Node3D/<NAME>","property":"position","value":{"x":0,"y":1,"z":0}}}
 ]}.
-Inside commands use the PLUGIN names: "create_node" and "set_property" (not node_create / node_set_property). The whole batch rolls back if any step fails.`,
+Inside commands use the PLUGIN names: "create_node" and "set_property" (not node_create /
+node_set_property). The whole batch rolls back if any step fails. Good for sequences like
+stacking several nodes — one batch instead of many separate calls.`,
     ],
   },
 
@@ -66,30 +74,49 @@ Inside commands use the PLUGIN names: "create_node" and "set_property" (not node
     label: "Material",
     description: "Set colors, materials, and the visual look of meshes.",
     tools: ["material_manage", "node_set_property", "filesystem_manage"],
-    systemPrompt: `MATERIAL MODE (Godot 4.6) — verified tool contracts:
-- To color a mesh, use material_manage op="apply_to_node". The material values go in a params object INSIDE params. Shape: params={"node_path":"/Node3D/Floor","params":{"albedo_color":{"r":1,"g":0,"b":0,"a":1}}}.
-- Color channels are 0.0 to 1.0 (not 0-255). Alpha < 1 makes it semi-transparent.
-- To put an existing material file on a node, use node_set_property path="...", property="material_override", value="res://materials/your.tres".
-- A shader lives in a .gdshader text file made with filesystem_manage op="write_text". See the shader doc.`,
+    systemPrompt: `MATERIAL MODE (Godot 4.6) — how the engine works here:
+
+FACT: The look of a 3D mesh (its color, metalness, transparency, glow) is set by applying a
+MATERIAL to it — NEVER by a "modulate" property. "modulate" only exists on 2D nodes; a
+MeshInstance3D has no modulate and trying to set it fails. To change how a mesh looks, use
+material_manage, not node_set_property on a color property.
+
+FACT: The node must already have a mesh to show its material. If a mesh has no visible mesh
+resource yet, give it one first (that is a transform-mode task), then apply the material.
+
+Blueprint to set a mesh's look (adapt the inner properties to what's asked):
+  material_manage op="apply_to_node", params={"node_path":<NODE_PATH>, "params":{ <LOOK> }}.
+  Note the NESTED params: the material properties live in an inner "params" object.
+  <LOOK> properties (combine as needed):
+    • color:        "albedo_color":{"r":R,"g":G,"b":B,"a":A}   (channels 0.0–1.0, NOT 0–255)
+    • transparency: alpha (a) below 1.0 makes it see-through (no separate flag needed)
+    • metal/shiny:  "metallic":1.0, "roughness":0.15
+    • glow:         "emission_enabled":true, "emission":{"r":R,"g":G,"b":B}, "emission_energy_multiplier":N
+  Example (red): params={"node_path":"/Node3D/<NAME>","params":{"albedo_color":{"r":1,"g":0,"b":0,"a":1}}}.
+  Generalize the color to whatever is asked (e.g. orange ≈ {"r":1,"g":0.5,"b":0,"a":1}).
+
+FACT: To put an existing material FILE on a node instead, use node_set_property
+property="material_override", value="res://materials/<NAME>.tres".
+
+Blueprint to create and apply a custom SHADER (for effects beyond a plain material):
+  1. Write the shader as a .gdshader text file, ALL ON ONE LINE (no line breaks, no tabs):
+     filesystem_manage op="write_text", params={"path":"res://shaders/<NAME>.gdshader",
+     "content":"shader_type spatial; void fragment() { ALBEDO = vec3(0.0, 1.0, 1.0); ALPHA = 0.6; }"}.
+     CRITICAL: a 3D shader starts with "shader_type spatial;" and the whole body stays on ONE
+     line, statements separated by "; ". Do NOT put \\n or tabs inside content — they break the call.
+  2. Wrap it in a ShaderMaterial .tres: filesystem_manage op="write_text",
+     params={"path":"res://materials/<NAME>.tres","content":"[gd_resource type=\\"ShaderMaterial\\" load_steps=2 format=3]\\n[ext_resource type=\\"Shader\\" path=\\"res://shaders/<NAME>.gdshader\\" id=\\"1\\"]\\n[resource]\\nshader = ExtResource(\\"1\\")"}.
+  3. Assign it: node_set_property path=<NODE_PATH>, property="material_override", value="res://materials/<NAME>.tres".
+  Adapt the ALBEDO/ALPHA in the shader to the look asked.`,
     docs: [
-      `MATERIAL: Color a mesh (fastest, verified).
-material_manage op="apply_to_node", params={"node_path":"/Node3D/Floor","params":{"albedo_color":{"r":0,"g":1,"b":1,"a":1}}}.
-The inner params holds the material properties: albedo_color, metallic, roughness, emission. Cyan is {"r":0,"g":1,"b":1,"a":1}; adapt to the color asked.`,
+      `TIP — combine looks in one call. The inner params can hold several properties at once,
+so a mesh can be metallic AND glowing together:
+params={"node_path":"/Node3D/<NAME>","params":{"metallic":1.0,"roughness":0.15,"emission_enabled":true,"emission":{"r":0,"g":1,"b":1},"emission_energy_multiplier":2.0}}.
+A polished metal that glows is one apply_to_node call, not two.`,
 
-      `MATERIAL: Make a mesh semi-transparent.
-material_manage op="apply_to_node", params={"node_path":"/Node3D/Glass","params":{"albedo_color":{"r":0.7,"g":0.7,"b":0.9,"a":0.4}}}.
-Alpha (a) below 1 creates the transparency; no separate transparency flag is needed.`,
-
-      `MATERIAL: Make a mesh metallic / shiny.
-material_manage op="apply_to_node", params={"node_path":"/Node3D/Ball","params":{"metallic":1.0,"roughness":0.15}}.
-High metallic + low roughness reads as polished metal.`,
-
-      `MATERIAL: Create and apply a SHADER (verified flow).
-Step 1 — write the shader file in ONE LINE (no line breaks): filesystem_manage op="write_text", params={"path":"res://shaders/holo.gdshader","content":"shader_type spatial; void fragment() { ALBEDO = vec3(0.0, 1.0, 1.0); ALPHA = 0.6; }"}.
-CRITICAL: write the whole shader on a SINGLE line, separating statements with "; " and spaces. Do NOT put \\n or tabs inside content — they break the call. GLSL works fine on one line.
-Step 2 — write a ShaderMaterial .tres pointing to it: filesystem_manage op="write_text", params={"path":"res://materials/holo.tres","content":"[gd_resource type=\\"ShaderMaterial\\" load_steps=2 format=3]\\n[ext_resource type=\\"Shader\\" path=\\"res://shaders/holo.gdshader\\" id=\\"1\\"]\\n[resource]\\nshader = ExtResource(\\"1\\")"}.
-Step 3 — assign it: node_set_property path="/Node3D/Card", property="material_override", value="res://materials/holo.tres".
-A 3D shader file must start with "shader_type spatial;" and should be written on ONE line (no \\n). Adapt the ALBEDO/ALPHA to the look asked.`,
+      `TIP — common colors as 0–1 channels: red {"r":1,"g":0,"b":0,"a":1}, green {"r":0,"g":1,"b":0,"a":1},
+blue {"r":0,"g":0,"b":1,"a":1}, orange {"r":1,"g":0.5,"b":0,"a":1}, cyan {"r":0,"g":1,"b":1,"a":1},
+white {"r":1,"g":1,"b":1,"a":1}. Alpha below 1 makes it semi-transparent (e.g. glass a≈0.4).`,
     ],
   },
 
@@ -142,7 +169,8 @@ node_create type="Button", name="PlayButton", parent_path="/Node3D".
 node_set_property path="/Node3D/PlayButton", property="text", value="Play".`,
 
       `UI: Connect a button press to a method.
-signal_manage op="connect", params={"source_path":"/Node3D/PlayButton","signal":"pressed","target_path":"/Node3D","method":"_on_play_pressed"}.`,
+signal_manage op="connect", params={"path":"/Node3D/PlayButton","signal":"pressed","target":"/Node3D","method":"_on_play_pressed"}.
+"path" is the node that emits (the button); "target" is the node whose method runs.`,
     ],
   },
 
@@ -161,8 +189,9 @@ Step 1: script_create params={"path":"res://scripts/spin.gd","content":"extends 
 Step 2: script_attach params={"node_path":"/Node3D/Ball","script_path":"res://scripts/spin.gd"}.
 @export makes "speed" editable in the Inspector.`,
 
-      `SCRIPT: Connect a signal via tool.
-signal_manage op="connect", params={"source_path":"/Node3D/Btn","signal":"pressed","target_path":"/Node3D","method":"_on_btn"}.`,
+      `TIP — connect a signal to a method via tool.
+signal_manage op="connect", params={"path":"/Node3D/Btn","signal":"pressed","target":"/Node3D","method":"_on_btn"}.
+"path" is the node that emits the signal; "target" is the node whose method runs.`,
     ],
   },
 

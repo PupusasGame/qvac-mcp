@@ -20,7 +20,6 @@ import {
 } from "@qvac/sdk";
 
 import { config }     from "../config/config.mjs";
-import { allContractDocs } from "./tool-contracts.mjs";
 import { appendLog }  from "./logger.mjs";
 import { GODOT_DOCS } from "./godot-docs.mjs";
 import { allModeDocs } from "./modes.mjs";
@@ -37,18 +36,23 @@ let _lastSearch = [];   // diagnósticos de la última búsqueda RAG (para panel
 // con ~40 docs genéricos ("params/node/path") que el embedder confundía con todo.
 // Resultado: índice pequeño y limpio, todo del mismo vocabulario que usa el agente.
 function _buildCorpus() {
-  const contractDocs = allContractDocs();   // nuestras descripciones curadas, por modo
-  const modeDocs     = allModeDocs();        // ejemplos curados, por modo
-
-  const base = [...contractDocs, ...modeDocs];
+  // El RAG sirve SOLO "tips" por modo: los docs[] curados de cada modo (de modes.mjs),
+  // etiquetados [MODE:xxx]. NO incluimos las descripciones de contratos de tool:
+  // el modelo YA recibe esas descripciones directamente como definición de cada tool
+  // (vía _buildTools/contractFor en agent.mjs), filtradas por modo. Tenerlas también
+  // en el índice las hacía competir como documentos de búsqueda contra los tips de
+  // flujo (p.ej. "node_create" genérico le ganaba al tip de "crear objeto visible").
+  // Al dejar el corpus solo con tips homogéneos, el RAG complementa el Canal Directo
+  // (systemPrompt del modo) en vez de competir con él.
+  const modeDocs = allModeDocs();   // tips curados, por modo
 
   // Docs de clases Godot: conocimiento de apoyo opcional (sin prefijo de modo, se
   // conservan siempre en el filtro). Útiles para preguntas de API que no cubren
-  // los contratos. Controlado por config.rag.includeGodotDocs.
+  // los tips. Controlado por config.rag.includeGodotDocs.
   if (config.rag?.includeGodotDocs) {
-    return [...base, ...GODOT_DOCS];
+    return [...modeDocs, ...GODOT_DOCS];
   }
-  return base;
+  return modeDocs;
 }
 
 // Inicializa RAG. Idempotente: si el workspace ya existe, no re-ingiere.
