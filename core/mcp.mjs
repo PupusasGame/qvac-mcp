@@ -97,7 +97,7 @@ export async function connect() {
 
   const sessionId = sessions.sessions[0].session_id;
   await callTool("session_activate", { session_id: sessionId });
-  console.log(`  Sesión Godot activated: ${sessionId}`);
+  console.log(`  Godot session active: ${sessionId}`);
 
   
   await _discoverTools();

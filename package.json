@@ -11,9 +11,9 @@
     "type": "git",
     "url": "git+https://github.com/PupusasGame/qvac-mcp.git"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": ["qvac", "mcp", "godot", "local-ai", "edge-ai", "agent"],
+  "author": "PupusasGame",
+  "license": "Apache-2.0",
   "type": "module",
   "bugs": {
     "url": "https://github.com/PupusasGame/qvac-mcp/issues"
