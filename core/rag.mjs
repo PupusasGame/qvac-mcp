@@ -64,7 +64,7 @@ export async function initRag(onProgress) {
     modelSrc:  config.rag.embeddingsSrc,
     modelType: config.rag.embeddingsType,
     onProgress: onProgress ?? ((p) =>
-      process.stdout.write(`\r  Cargando embeddings... ${p.percentage?.toFixed(0) ?? "?"}%`)),
+      process.stdout.write(`\r  loading embeddings... ${p.percentage?.toFixed(0) ?? "?"}%`)),
   });
 
   // 2. ¿Ya existe el workspace en disco? Si sí, no re-ingestamos.
@@ -88,11 +88,11 @@ export async function initRag(onProgress) {
                          // recuperación. Cada tool trata un tema coherente, así
                          // que un documento = un embedding funciona mejor.
       onProgress: (stage, current, total) =>
-        process.stdout.write(`\r  Ingiriendo docs [${stage}] ${current}/${total}   `),
+        process.stdout.write(`\r  Ingesting docs [${stage}] ${current}/${total}   `),
     });
 
     appendLog({ event: "rag_ingest_done", workspace: config.rag.workspace, docCount: documents.length });
-    process.stdout.write("\r  Documentación ingerida ✓                      \n");
+    process.stdout.write("\r  Documentation ingested ✓                      \n");
   } else {
     appendLog({ event: "rag_workspace_reused", workspace: config.rag.workspace });
   }

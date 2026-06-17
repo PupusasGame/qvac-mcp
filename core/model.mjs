@@ -8,7 +8,7 @@ export async function startModel(onProgress) {
   profiler.enable();
 
   const src = config.model.src ?? config.model.path;
-  console.log(`\nCargando modelo desde:\n  ${typeof src === "object" ? src.name : src}\n`);
+  console.log(`\nLoading Model from:\n  ${typeof src === "object" ? src.name : src}\n`);
 
   // Construimos modelConfig de forma incremental. Los flags base siempre van;
   // los de TurboQuant (cache-type-k / cache-type-v) SOLO se añaden si están
@@ -31,11 +31,11 @@ export async function startModel(onProgress) {
     modelType:   config.model.type,
     modelConfig,
     onProgress:  onProgress ?? ((p) => {
-      process.stdout.write(`\r  Cargando... ${p.percentage?.toFixed(0) ?? "?"}%`);
+      process.stdout.write(`\r  Loading... ${p.percentage?.toFixed(0) ?? "?"}%`);
     }),
   });
 
-  process.stdout.write("\r  Modelo cargado ✓                    \n");
+  process.stdout.write("\r  Model loaded ✓                    \n");
 
   // Logueamos qué config se usó realmente (útil para confirmar que TurboQuant
   // entró en efecto en una corrida dada).
@@ -44,7 +44,7 @@ export async function startModel(onProgress) {
 }
 
 export function getModelId() {
-  if (!_modelId) throw new Error("El modelo no está cargado. Llama startModel() primero.");
+  if (!_modelId) throw new Error("The model is not loading. run startModel() first.");
   return _modelId;
 }
 
@@ -60,5 +60,5 @@ export async function stopModel() {
   await unloadModel({ modelId: _modelId });
   _modelId = null;
   await close();
-  console.log("\nModelo descargado. RAM liberada.");
+  console.log("\nModel unloaded, come back soon.");
 }

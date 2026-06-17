@@ -50,7 +50,7 @@ function _call(method, params = {}, withId = true) {
           try {
             resolve(JSON.parse(match[1]));
           } catch (e) {
-            reject(new Error(`Error parseando respuesta MCP: ${e.message}\nRaw: ${raw}`));
+            reject(new Error(`Error: answer from MCP: ${e.message}\nRaw: ${raw}`));
           }
         } else {
           
@@ -60,7 +60,7 @@ function _call(method, params = {}, withId = true) {
     });
 
     req.on("error", (err) => {
-      reject(new Error(`Error conectando al MCP server (${config.mcp.host}:${config.mcp.port}): ${err.message}`));
+      reject(new Error(`Error connecting to MCP server (${config.mcp.host}:${config.mcp.port}): ${err.message}`));
     });
 
     req.write(body);
@@ -79,11 +79,11 @@ export async function connect() {
   });
 
   if (initRes?.error) {
-    throw new Error(`MCP initialize falló: ${initRes.error.message}`);
+    throw new Error(`MCP initialize failed: ${initRes.error.message}`);
   }
 
   const serverInfo = initRes?.result?.serverInfo;
-  console.log(`  MCP conectado: ${serverInfo?.name} v${serverInfo?.version}`);
+  console.log(`  MCP connected to: ${serverInfo?.name} v${serverInfo?.version}`);
 
   
   await _call("notifications/initialized", {}, false);
@@ -92,12 +92,12 @@ export async function connect() {
   const sessions = await callTool("session_manage", { op: "list" });
 
   if (!sessions?.sessions?.length) {
-    throw new Error("No hay sesiones de Godot activas. Abre Godot con el plugin Godot AI.");
+    throw new Error("There are not active sessions from Godot, Open Godot make sure to install the plugin Godot AI.");
   }
 
   const sessionId = sessions.sessions[0].session_id;
   await callTool("session_activate", { session_id: sessionId });
-  console.log(`  Sesión Godot activada: ${sessionId}`);
+  console.log(`  Sesión Godot activated: ${sessionId}`);
 
   
   await _discoverTools();
@@ -120,9 +120,9 @@ async function _discoverTools() {
 
   if (res?.result?.tools) {
     _tools = res.result.tools;
-    console.log(`  Herramientas descubiertas: ${_tools.length}`);
+    console.log(` Tools: ${_tools.length}`);
   } else {
-    console.warn("  No se pudieron descubrir herramientas via tools/list");
+    console.warn("  Cannot find tools/list");
     _tools = [];
   }
 }
